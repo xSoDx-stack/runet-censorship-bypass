@@ -56,9 +56,13 @@ class PacSyncManager {
     this.isSyncing = false;
     this.isControlled = false;
     this.isControllable = false;
+    this.isInitialized = false;
   }
 
   async init() {
+    if (this.isInitialized) {
+      return;
+    }
     const saved = await storage.get(STORAGE_KEY, {});
     if (saved && typeof saved === 'object') {
       if (saved.currentPacProviderKey !== undefined) {
@@ -75,6 +79,7 @@ class PacSyncManager {
       }
     }
 
+    this.isInitialized = true;
     await this.updateControlState();
     this.setupAlarms();
     this.updateTitle();
@@ -85,7 +90,9 @@ class PacSyncManager {
   }
 
   setupAlarms() {
+    if (!chrome.alarms) return;
     chrome.alarms.get(ALARM_NAME, (existingAlarm) => {
+      if (chrome.runtime.lastError) { /* ignore */ }
       if (!existingAlarm) {
         chrome.alarms.create(ALARM_NAME, {
           periodInMinutes: 240, // every 4 hours

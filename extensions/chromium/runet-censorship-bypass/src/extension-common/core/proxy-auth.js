@@ -2,6 +2,7 @@
 
 import { storage } from './storage.js';
 import { utils } from './utils.js';
+import { appState } from './app-state.js';
 
 /**
  * Proxy Authentication Manager for Chrome MV3
@@ -126,6 +127,10 @@ function findCredentials(host, port) {
 
 export function setupAuthListener() {
   if (chrome.webRequest && chrome.webRequest.onAuthRequired) {
+    if (chrome.webRequest.onAuthRequired.hasListeners && chrome.webRequest.onAuthRequired.hasListeners()) {
+      return;
+    }
+
     const requestTries = {};
 
     chrome.webRequest.onAuthRequired.addListener(
@@ -135,7 +140,7 @@ export function setupAuthListener() {
           return {};
         }
 
-        const handleAuth = (credsMap) => {
+        const handleAuth = () => {
           const host = details.challenger.host;
           const port = details.challenger.port;
           const hostPortKey = `${host}:${port}`;
@@ -172,18 +177,23 @@ export function setupAuthListener() {
           return resp;
         };
 
-        // If credentials are in memory, return synchronously or immediately
-        if (Object.keys(proxyCredentialsMap).length > 0) {
-          return handleAuth(proxyCredentialsMap);
+        // If credentials are in memory and already initialized, handle immediately
+        if (appState.isInitialized && Object.keys(proxyCredentialsMap).length > 0) {
+          return handleAuth();
         }
 
-        // If in-memory is cold, rehydrate from storage
-        chrome.storage.local.get('proxy-credentials-map', (saved) => {
-          proxyCredentialsMap = Object.assign({}, saved['proxy-credentials-map'] || {});
-          handleAuth(proxyCredentialsMap);
-        });
-
-        return {};
+        // If in-memory is cold or initializing, wait for appState before responding
+        if (asyncCallback) {
+          appState.ensureInitialized()
+            .then(() => handleAuth())
+            .catch((err) => {
+              console.warn('[Proxy Auth] Error during auth ensureInitialized:', err);
+              asyncCallback({});
+            });
+          return {};
+        } else {
+          return handleAuth();
+        }
       },
       { urls: ['<all_urls>'] },
       ['asyncBlocking']

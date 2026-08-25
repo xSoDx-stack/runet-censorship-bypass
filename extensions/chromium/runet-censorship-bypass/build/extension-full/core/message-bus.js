@@ -1,5 +1,6 @@
 'use strict';
 
+import { appState } from './app-state.js';
 import { pacSync, PAC_PROVIDERS } from './pac-sync.js';
 import { pacKitchen, getDefaultConfigs, getExceptionStats, matchExceptionDomain } from './pac-kitchen.js';
 import { ipToHost } from './ip-to-host.js';
@@ -11,12 +12,18 @@ import { logger } from './logger.js';
 import { formatErrorMessage } from './errors-lib.js';
 
 export function setupMessageBus() {
+  if (chrome.runtime.onMessage.hasListeners && chrome.runtime.onMessage.hasListeners()) {
+    return;
+  }
+
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.action) {
       return false;
     }
 
     const handleMessage = async () => {
+      await appState.ensureInitialized();
+
       switch (message.action) {
         case 'GET_STATE': {
           // Ultra-fast cached sync state and cached mods (0ms)

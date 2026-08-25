@@ -1,10 +1,9 @@
 'use strict';
 
 import { storage } from './core/storage.js';
+import { appState } from './core/app-state.js';
 import { pacSync } from './core/pac-sync.js';
-import { pacKitchen } from './core/pac-kitchen.js';
-import { setupAuthListener, initProxyAuth } from './core/proxy-auth.js';
-import { ipToHost } from './core/ip-to-host.js';
+import { setupAuthListener } from './core/proxy-auth.js';
 import { blockInformer } from './core/block-informer.js';
 import { errorHandlers } from './core/error-handlers.js';
 import { setupContextMenus, createContextMenuItems } from './core/context-menus.js';
@@ -13,15 +12,14 @@ import { logger } from './core/logger.js';
 
 console.log('[Service Worker] Initializing Runet Censorship Bypass (MV3)...');
 
-// Setup messaging, context menus, and event subsystems synchronously at top level
+// 1. Setup messaging, auth listener, context menus, and event listeners synchronously at top level
 setupMessageBus();
 setupAuthListener();
 setupContextMenus();
+errorHandlers.setupListeners();
 blockInformer.init();
-errorHandlers.init();
-logger.init();
 
-// Capture proxy connection failures strictly for diagnostic logging
+// 2. Capture proxy connection failures strictly for diagnostic logging
 if (chrome.webRequest && chrome.webRequest.onErrorOccurred) {
   chrome.webRequest.onErrorOccurred.addListener(
     (details) => {
@@ -59,23 +57,28 @@ if (chrome.webRequest && chrome.webRequest.onErrorOccurred) {
   );
 }
 
-// Alarms listener for background periodic synchronization
-chrome.alarms.onAlarm.addListener((alarm) => {
+// 3. Alarms listener for background periodic synchronization (ensuring state is initialized)
+chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'periodic-pac-update') {
     console.log('[Service Worker Alarm] Triggering periodic PAC update:', new Date().toLocaleString('ru-RU'));
-    pacSync.syncWithPacProvider({ ifUnattended: true }).catch((err) => {
+    try {
+      await appState.ensureInitialized();
+      await pacSync.syncWithPacProvider({ ifUnattended: true });
+    } catch (err) {
       console.warn('[Periodic PAC Update Warning]:', err);
-    });
+    }
   }
 });
 
-// Extension Installed / Updated
+// 4. Extension Installed / Updated
 chrome.runtime.onInstalled.addListener(async (details) => {
   console.log('[Service Worker] onInstalled reason:', details.reason);
   createContextMenuItems();
-  await initProxyAuth();
-  await ipToHost.init();
-  await pacSync.init();
+  try {
+    await appState.ensureInitialized();
+  } catch (err) {
+    console.warn('[Service Worker] onInstalled initialization error:', err);
+  }
 
   if (details.reason === 'install') {
     const consentGiven = await storage.get('ifConsentGiven', false);
@@ -85,10 +88,17 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   }
 });
 
-// Browser Startup
+// 5. Browser Startup
 chrome.runtime.onStartup.addListener(async () => {
   console.log('[Service Worker] onStartup');
-  await initProxyAuth();
-  await ipToHost.init();
-  await pacSync.init();
+  try {
+    await appState.ensureInitialized();
+  } catch (err) {
+    console.warn('[Service Worker] onStartup initialization error:', err);
+  }
+});
+
+// 6. Asynchronously trigger state rehydration in background for current SW instance
+appState.ensureInitialized().catch((err) => {
+  console.warn('[Service Worker] Background ensureInitialized warning:', err);
 });

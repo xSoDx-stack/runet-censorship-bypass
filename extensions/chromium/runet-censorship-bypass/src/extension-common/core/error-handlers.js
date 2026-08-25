@@ -14,25 +14,37 @@ class ErrorHandlersManager {
       'ext-error': true,
       'no-control': true,
     };
+    this.isInitialized = false;
+    this._listenersRegistered = false;
   }
 
-  async init() {
-    const saved = await storage.get(HANDLERS_STATE_KEY, null);
-    if (saved && typeof saved === 'object') {
-      Object.assign(this.notificationsEnabled, saved);
-    }
+  setupListeners() {
+    if (this._listenersRegistered) return;
 
-    if (chrome.proxy && chrome.proxy.onProxyError) {
+    if (chrome.proxy && chrome.proxy.onProxyError && !chrome.proxy.onProxyError.hasListeners()) {
       chrome.proxy.onProxyError.addListener((details) => {
         this.handleProxyError(details);
       });
     }
 
-    if (chrome.notifications && chrome.notifications.onClicked) {
+    if (chrome.notifications && chrome.notifications.onClicked && !chrome.notifications.onClicked.hasListeners()) {
       chrome.notifications.onClicked.addListener((notId) => {
         chrome.notifications.clear(notId);
       });
     }
+
+    this._listenersRegistered = true;
+  }
+
+  async init() {
+    this.setupListeners();
+    if (this.isInitialized) return;
+
+    const saved = await storage.get(HANDLERS_STATE_KEY, null);
+    if (saved && typeof saved === 'object') {
+      Object.assign(this.notificationsEnabled, saved);
+    }
+    this.isInitialized = true;
   }
 
   handleProxyError(details) {
