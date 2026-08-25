@@ -5,6 +5,7 @@ module.exports = {
     webextensions: true,
     es2022: true,
     node: true,
+    mocha: true,
   },
   globals: {
     chrome: true,
@@ -18,4 +19,12 @@ module.exports = {
     'no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
     'no-empty': ['warn', { allowEmptyCatch: true }],
   },
+  overrides: [
+    {
+      files: ['test/**/*.js'],
+      env: {
+        mocha: true,
+      },
+    },
+  ],
 };
