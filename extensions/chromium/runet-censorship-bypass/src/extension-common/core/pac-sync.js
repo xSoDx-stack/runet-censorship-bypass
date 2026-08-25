@@ -57,6 +57,7 @@ class PacSyncManager {
     this.isControlled = false;
     this.isControllable = false;
     this.isInitialized = false;
+    this.revision = 0;
   }
 
   async init() {
@@ -191,6 +192,7 @@ class PacSyncManager {
   }
 
   async applyPacData(pacRawData) {
+    this.revision++;
     const pacMods = await pacKitchen.getPacMods();
     const cooked = pacKitchen.cook(pacRawData, pacMods);
     this.cookedPacData = cooked;
@@ -278,6 +280,7 @@ class PacSyncManager {
   }
 
   async clearPac() {
+    this.revision++;
     this.currentPacProviderKey = 'none';
     this.rawPacData = '';
     this.cookedPacData = '';
@@ -295,14 +298,24 @@ class PacSyncManager {
   }
 
   async reapplyCurrentPac() {
+    this.revision++;
     if (this.currentPacProviderKey === 'none' || !this.currentPacProviderKey) {
-      return;
+      return new Promise((resolve) => {
+        chrome.proxy.settings.clear({ scope: 'regular' }, async () => {
+          await this.updateControlState();
+          resolve();
+        });
+      });
     }
     if (this.rawPacData) {
       await this.applyPacData(this.rawPacData);
     } else {
       await this.syncWithPacProvider({ key: this.currentPacProviderKey, ifUnattended: true });
     }
+  }
+
+  getRevision() {
+    return this.revision;
   }
 
   getState() {

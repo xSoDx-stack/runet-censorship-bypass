@@ -18,7 +18,7 @@ let appState = {
   defaultConfigs: {},
   notifications: {},
   lastErrors: [],
-  version: '2.2.10',
+  version: '2.2.11',
   activeTab: 'exceptions',
   currentSiteDomain: '',
   exceptionStats: { includedCount: 0, excludedCount: 0, whitelistCount: 0 },
@@ -33,7 +33,7 @@ let appState = {
 };
 
 function formatVersion(ver) {
-  if (!ver) return 'v2.2.10';
+  if (!ver) return 'v2.2.11';
   let clean = String(ver).replace(/^0\.0\./, '').replace(/^v+/i, '').trim();
   return `v${clean}`;
 }
@@ -1434,7 +1434,7 @@ async function loadState(currentDomain = '') {
     appState.defaultConfigs = res.data.defaultConfigs || appState.defaultConfigs;
     appState.notifications = res.data.notifications || appState.notifications;
     appState.lastErrors = res.data.lastErrors || appState.lastErrors;
-    appState.version = formatVersion(res.data.version || '2.2.10');
+    appState.version = formatVersion(res.data.version || '2.2.11');
     appState.exceptionStats = res.data.exceptionStats || appState.exceptionStats;
     if (res.data.currentSiteMatch) {
       appState.currentSiteMatch = res.data.currentSiteMatch;
