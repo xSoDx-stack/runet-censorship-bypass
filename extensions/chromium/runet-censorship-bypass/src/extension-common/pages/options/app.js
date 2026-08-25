@@ -18,7 +18,7 @@ let appState = {
   defaultConfigs: {},
   notifications: {},
   lastErrors: [],
-  version: '2.2.9',
+  version: '2.2.10',
   activeTab: 'exceptions',
   currentSiteDomain: '',
   exceptionStats: { includedCount: 0, excludedCount: 0, whitelistCount: 0 },
@@ -33,7 +33,7 @@ let appState = {
 };
 
 function formatVersion(ver) {
-  if (!ver) return 'v2.2.9';
+  if (!ver) return 'v2.2.10';
   let clean = String(ver).replace(/^0\.0\./, '').replace(/^v+/i, '').trim();
   return `v${clean}`;
 }
@@ -78,6 +78,8 @@ function initElements() {
   el.statExcludedCount = document.getElementById('statExcludedCount');
   el.statWhitelistCount = document.getElementById('statWhitelistCount');
   el.openExceptionsPageBtn = document.getElementById('openExceptionsPageBtn');
+  el.openPacGeneratorBtn = document.getElementById('openPacGeneratorBtn');
+  el.openPacGeneratorToolsBtn = document.getElementById('openPacGeneratorToolsBtn');
   // Own Proxies Form & Controls
   el.proxyFormView = document.getElementById('proxyFormView');
   el.proxyRawView = document.getElementById('proxyRawView');
@@ -1432,7 +1434,7 @@ async function loadState(currentDomain = '') {
     appState.defaultConfigs = res.data.defaultConfigs || appState.defaultConfigs;
     appState.notifications = res.data.notifications || appState.notifications;
     appState.lastErrors = res.data.lastErrors || appState.lastErrors;
-    appState.version = formatVersion(res.data.version || '2.2.9');
+    appState.version = formatVersion(res.data.version || '2.2.10');
     appState.exceptionStats = res.data.exceptionStats || appState.exceptionStats;
     if (res.data.currentSiteMatch) {
       appState.currentSiteMatch = res.data.currentSiteMatch;
@@ -1514,6 +1516,17 @@ function setupEvents() {
     el.openExceptionsPageBtn.addEventListener('click', () => {
       chrome.tabs.create({ url: chrome.runtime.getURL('pages/exceptions/index.html') });
     });
+  }
+
+  // Open Local PAC Generator in New Tab
+  const openPacGenerator = () => {
+    chrome.tabs.create({ url: chrome.runtime.getURL('pages/generator/index.html') });
+  };
+  if (el.openPacGeneratorBtn) {
+    el.openPacGeneratorBtn.addEventListener('click', openPacGenerator);
+  }
+  if (el.openPacGeneratorToolsBtn) {
+    el.openPacGeneratorToolsBtn.addEventListener('click', openPacGenerator);
   }
 
   // Provider Selection with Gating for onlyOwnSites

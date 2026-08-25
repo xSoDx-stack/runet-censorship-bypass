@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>АнтиЧебурнет — Локальный PAC-генератор</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="page-header">
+      <div class="header-brand">
+        <img src="../../icons/default-128.png" alt="Logo" class="logo">
+        <div>
+          <div class="title-row">
+            <h1>Локальный PAC-генератор</h1>
+            <span class="badge badge-cws">CWS Manifest V3</span>
+          </div>
+          <p class="subtitle">Генерация автономного PAC-скрипта из списков доменов без исполнения удаленного JavaScript</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button class="btn btn-secondary" id="downloadPacBtn" title="Скачать сгенерированный PAC-скрипт как файл .pac">
+          <span>💾 Скачать .pac</span>
+        </button>
+        <button class="btn btn-secondary" id="copyPacBtn" title="Скопировать весь исходный код скрипта в буфер">
+          <span>📋 Копировать код</span>
+        </button>
+        <button class="btn btn-primary" id="applyToExtensionBtn" title="Применить созданный PAC напрямую в настройках браузера через расширение">
+          <span>🚀 Применить в расширении</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main 2-Column Grid -->
+    <div class="generator-grid">
+      <!-- LEFT COLUMN: Inputs, Presets & Routing Rules -->
+      <div class="grid-column left-col">
+        <!-- Domains & Rules Input Card -->
+        <div class="card">
+          <div class="card-header-bar">
+            <div>
+              <div class="card-title">1. Список доменов для проксирования</div>
+              <div class="card-desc">Введите домены по одному на строку (поддомены подставляются автоматически)</div>
+            </div>
+            <span class="count-badge" id="domainCounterBadge">0 доменов</span>
+          </div>
+
+          <!-- Quick Presets Toolbar -->
+          <div class="presets-toolbar">
+            <span class="presets-label">⚡ Быстрый импорт:</span>
+            <button class="chip-btn" id="importFromExtensionBtn" title="Загрузить список включенных сайтов из расширения">📦 Из расширения</button>
+            <button class="chip-btn" data-preset="social">📱 Соцсети</button>
+            <button class="chip-btn" data-preset="media_ai">🤖 AI и медиа</button>
+            <button class="chip-btn" data-preset="trackers">🧲 Трекеры</button>
+            <button class="chip-btn" data-preset="discord_yt">🎧 Discord / CDN</button>
+            <input type="file" id="filePickerInput" accept=".txt,.json,.csv,text/plain" style="display: none;">
+            <button class="chip-btn" id="uploadFileChipBtn" title="Загрузить из текстового файла">📁 Файл .txt</button>
+          </div>
+
+          <!-- Textarea for Domains -->
+          <textarea id="domainsTextarea" class="code-textarea" spellcheck="false" placeholder="rutracker.org&#10;twitter.com&#10;*.instagram.com&#10;chatgpt.com&#10;openai.com&#10;t.co"></textarea>
+
+          <div class="textarea-footer">
+            <span id="domainsStatsText" class="stats-hint">Поддерживаются прямые домены, *.wildcard и комментарии (#)</span>
+            <button class="btn-link" id="clearDomainsBtn">Очистить список</button>
+          </div>
+        </div>
+
+        <!-- Proxy Routing Config Card -->
+        <div class="card">
+          <div class="card-title">2. Маршрутизация и прокси-серверы</div>
+          <div class="card-desc">Укажите один или несколько цепочек прокси (формат: <code>TYPE host:port</code>)</div>
+
+          <!-- Quick Proxy Presets -->
+          <div class="proxy-presets-row">
+            <button class="chip-btn" data-proxy-preset="antizapret">🛡️ Антизапрет</button>
+            <button class="chip-btn" data-proxy-preset="tor">🧅 Tor (localhost:9150)</button>
+            <button class="chip-btn" data-proxy-preset="warp">⚡ WARP (localhost:40000)</button>
+            <button class="chip-btn" data-proxy-preset="custom_from_ext">⚙️ Мои прокси из настроек</button>
+          </div>
+
+          <div class="input-group">
+            <label class="form-label" for="proxyStringInput">Строка возврата прокси для FindProxyForURL:</label>
+            <input type="text" id="proxyStringInput" class="text-input font-mono" value="HTTPS proxy.antizapret.prostovpn.org:8443; PROXY proxy.antizapret.prostovpn.org:8443; DIRECT">
+          </div>
+
+          <!-- Options Toggles -->
+          <div class="options-grid">
+            <label class="checkbox-label">
+              <input type="checkbox" id="optBypassLocal" checked>
+              <span>Исключать локальные адреса (localhost, 127.0.0.1, 10.*, 192.168.*)</span>
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" id="optProxyOrDie">
+              <span>Проксируй или умри (запретить DIRECT при сбое прокси)</span>
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" id="optHttpsOnly">
+              <span>Проксировать только HTTPS-запросы</span>
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" id="optProhibitDns">
+              <span>Запретить DNS-запросы в браузере (без dnsResolve)</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT COLUMN: Interactive Sandbox Tester & Live Generated Code -->
+      <div class="grid-column right-col">
+        <!-- Interactive PAC Sandbox Tester -->
+        <div class="card sandbox-card">
+          <div class="card-title">3. Интерактивный тест (PAC Debugger)</div>
+          <div class="card-desc">Проверьте в реальном времени, как сгенерированный скрипт маршрутизирует любой URL</div>
+
+          <div class="test-input-row">
+            <input type="text" id="testUrlInput" class="text-input" placeholder="Введите адрес для проверки (напр. rutracker.org или https://sub.x.com)">
+            <button class="btn btn-primary btn-sm" id="runTestBtn">⚡ Проверить</button>
+          </div>
+
+          <div id="testResultBox" class="test-result-box" style="display: none;">
+            <div class="result-header">
+              <span id="testStatusBadge" class="status-badge">DIRECT</span>
+              <span id="testExecTime" class="exec-time">0.02 мс</span>
+            </div>
+            <div class="result-route" id="testResultRouteText">DIRECT</div>
+            <div class="result-details" id="testResultDetailsText">Соединение без прокси</div>
+          </div>
+        </div>
+
+        <!-- Generated Code Preview Card -->
+        <div class="card code-card">
+          <div class="card-header-bar">
+            <div>
+              <div class="card-title">4. Исходный код PAC-скрипта</div>
+              <div class="card-desc">Готовый к использованию чистый JavaScript для Chrome Proxy API</div>
+            </div>
+            <span class="badge" id="pacSizeBadge">0 КБ</span>
+          </div>
+
+          <div class="code-preview-wrapper">
+            <pre id="generatedCodePreview" class="code-block font-mono"></pre>
+          </div>
+
+          <div class="code-actions-footer">
+            <button class="btn btn-secondary btn-sm" id="copyDataUriBtn">🔗 Копировать Data URI</button>
+            <button class="btn btn-primary btn-sm" id="copyCodeFooterBtn">📋 Скопировать скрипт</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast Element -->
+    <div id="toast" class="toast"></div>
+  </div>
+
+  <script type="module" src="index.js"></script>
+</body>
+</html>

@@ -16,7 +16,7 @@
       <div>
         <div class="brand-title">
           АнтиЧебурнет
-          <span class="version-badge" id="extVersion">v2.2.9</span>
+          <span class="version-badge" id="extVersion">v2.2.10</span>
         </div>
       </div>
     </div>
@@ -114,6 +114,22 @@
           <span id="syncBtnIcon">🔄</span>
           <span>Обновить</span>
         </button>
+      </div>
+
+      <!-- Local PAC Generator Entry Card -->
+      <div class="card" style="margin-top: 10px; background: linear-gradient(135deg, rgba(59, 130, 246, 0.08) 0%, rgba(99, 102, 241, 0.08) 100%); border-color: rgba(59, 130, 246, 0.25);">
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px;">
+          <div>
+            <div class="card-title" style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+              <span>⚡ Локальный PAC-генератор</span>
+              <span class="version-badge" style="background: rgba(16, 185, 129, 0.2); color: #34d399; font-size: 9px; padding: 1px 6px;">CWS Ready</span>
+            </div>
+            <div class="card-desc" style="font-size: 11px;">Автономная генерация PAC из списков доменов без исполнения удаленного JS.</div>
+          </div>
+          <button class="btn btn-primary btn-sm" id="openPacGeneratorBtn" style="white-space: nowrap;">
+            <span>Открыть ↗</span>
+          </button>
+        </div>
       </div>
     </div>
   </section>
@@ -505,6 +521,15 @@
             <div class="switch-desc">Реестр Роскомсвободы</div>
           </div>
           <button class="btn btn-secondary btn-sm" id="checkBlacklistBtn">Реестр</button>
+        </div>
+
+        <div
+          style="display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border-color);">
+          <div>
+            <div class="switch-title">PAC-генератор</div>
+            <div class="switch-desc">Автономный генератор PAC-скриптов</div>
+          </div>
+          <button class="btn btn-secondary btn-sm" id="openPacGeneratorToolsBtn">Открыть ↗</button>
         </div>
 
         <div
