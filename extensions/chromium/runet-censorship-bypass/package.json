@@ -1,18 +1,18 @@
 {
-  "name": "runet-censorship-bypass",
-  "version": "0.0.19",
-  "description": "Development tools for chromium extension",
+  "name": "anticheburnet",
+  "version": "2.2.3",
+  "description": "АнтиЧебурнет - расширение для обхода интернет-цензуры (Manifest V3)",
   "scripts": {
     "lint": "eslint ./src/**/*.js --ignore-pattern vendor",
     "gulp": "gulp",
     "test": "mocha --recursive ./src/**/test/*",
-    "subpages": "cd ./src/extension-common/pages/options/ && npm run build && cd -",
-    "subpages:dev": "cd ./src/extension-common/pages/options/ && npm run build:dev:nocomp && cd -",
+    "subpages": "echo 'Subpages ready'",
+    "subpages:dev": "echo 'Subpages dev ready'",
     "start": "npm run release",
-    "release": "npm run subpages && npx gulp -- buildAll"
+    "release": "gulp buildAll"
   },
-  "author": "Ilya Ig. Petrov",
-  "license": "GPLv3",
+  "author": "anticensority+owners@googlegroups.com",
+  "license": "GPL-3.0-or-later",
   "devDependencies": {
     "chai": "^4.3.0",
     "eslint": "^7.19.0",

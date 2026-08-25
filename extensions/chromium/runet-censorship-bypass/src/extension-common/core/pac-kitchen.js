@@ -1,0 +1,532 @@
+'use strict';
+
+import { storage } from './storage.js';
+import { utils } from './utils.js';
+import { updateProxyCredentialsFromRaw, setupAuthListener, initProxyAuth } from './proxy-auth.js';
+
+const KITCHEN_STARTS_MARK = '\n\n//%#@@@@@@ PAC_KITCHEN_STARTS @@@@@@#%';
+const MODS_KEY = 'pac-kitchen-mods';
+const IF_INCONTINENCE_KEY = 'pac-kitchen-if-incontinence';
+
+export { setupAuthListener, initProxyAuth };
+
+export function matchExceptionDomain(host, exceptions = {}) {
+  if (!host || !exceptions || typeof exceptions !== 'object') return { matched: false };
+  host = host.toLowerCase().trim();
+
+  // 1. Direct exact match
+  if (Object.prototype.hasOwnProperty.call(exceptions, host)) {
+    return {
+      matched: true,
+      ruleKey: host,
+      isProxied: exceptions[host] === true,
+      isExact: true,
+    };
+  }
+
+  // 2. Exact wildcard match
+  const exactWild = `*.${host}`;
+  if (Object.prototype.hasOwnProperty.call(exceptions, exactWild)) {
+    return {
+      matched: true,
+      ruleKey: exactWild,
+      isProxied: exceptions[exactWild] === true,
+      isExact: true,
+    };
+  }
+
+  // 3. Parent domain suffix matches
+  const parts = host.split('.');
+  for (let i = 1; i < parts.length; i++) {
+    const parent = parts.slice(i).join('.');
+    const parentWild = `*.${parent}`;
+    if (Object.prototype.hasOwnProperty.call(exceptions, parentWild)) {
+      return {
+        matched: true,
+        ruleKey: parentWild,
+        isProxied: exceptions[parentWild] === true,
+        isExact: false,
+      };
+    }
+    if (Object.prototype.hasOwnProperty.call(exceptions, parent)) {
+      return {
+        matched: true,
+        ruleKey: parent,
+        isProxied: exceptions[parent] === true,
+        isExact: false,
+      };
+    }
+  }
+
+  return { matched: false };
+}
+
+export function getDefaultConfigs() {
+  return {
+    ifProxyHttpsUrlsOnly: {
+      dflt: false,
+      label: 'проксировать только HTTP<em>S</em>-сайты',
+      desc: 'Проксировать только сайты, доступные по шифрованному протоколу HTTPS. Прокси и провайдер смогут видеть только адреса проксируемых HTTPS-сайтов, но не их содержимое.',
+      order: 0,
+      category: 'general',
+    },
+    ifUseSecureProxiesOnly: {
+      dflt: false,
+      label: 'только шифрованная связь с прокси',
+      desc: 'Шифровать соединение до прокси от провайдера, используя только прокси типа HTTPS или локальный Tor.',
+      order: 1,
+      category: 'general',
+    },
+    ifProhibitDns: {
+      dflt: false,
+      label: 'запретить определение по IP/DNS',
+      desc: 'Запрещает скрипту использовать DNS в браузере для проверки IP-адресов.',
+      order: 2,
+      category: 'general',
+    },
+    ifProxyOrDie: {
+      dflt: true,
+      ifDfltMods: true,
+      label: 'проксируй или умри!',
+      desc: 'Запрещает прямое соединение без прокси в случаях, когда прокси отказывает.',
+      order: 3,
+      category: 'general',
+    },
+    ifUsePacScriptProxies: {
+      dflt: true,
+      category: 'ownProxies',
+      label: 'использовать прокси PAC-скрипта',
+      desc: 'Использовать официальные прокси-сервера от авторов PAC-скрипта.',
+      order: 4,
+    },
+    ifUseLocalTor: {
+      dflt: false,
+      category: 'ownProxies',
+      label: 'использовать СВОЙ локальный Tor',
+      desc: 'Использовать локально установленный Tor (SOCKS5 127.0.0.1:9150 / 9050) в качестве прокси.',
+      order: 5,
+    },
+    ifUseLocalWarp: {
+      dflt: false,
+      category: 'ownProxies',
+      label: 'использовать WARP как прокси',
+      desc: 'Использовать локальный Cloudflare WARP (SOCKS5 / HTTPS localhost:40000).',
+      order: 5.5,
+    },
+    exceptions: {
+      dflt: null,
+      category: 'exceptions',
+    },
+    ifMindExceptions: {
+      dflt: true,
+      category: 'exceptions',
+      label: 'учитывать исключения',
+      desc: 'Учитывать сайты, добавленные вручную (списки включений и исключений).',
+      order: 6,
+    },
+    whitelist: {
+      dflt: [],
+      category: 'exceptions',
+    },
+    ifMindWhitelist: {
+      dflt: false,
+      category: 'exceptions',
+      label: 'Ограничиться только белым списком',
+      desc: 'Разрешить расширению работать только с адресами из белого списка.',
+      order: 6.5,
+    },
+    ifUseOwnProxiesOnlyForOwnSites: {
+      dflt: false,
+      category: 'ownProxies',
+      label: 'использовать СВОИ прокси только для СВОИХ сайтов',
+      desc: 'Использовать свои прокси только для сайтов, добавленных в список вручную.',
+      order: 7,
+    },
+    customProxyStringRaw: {
+      dflt: '',
+      category: 'ownProxies',
+      order: 8,
+    },
+    ifProxyMoreDomains: {
+      dflt: false,
+      category: 'general',
+      label: 'проксировать также .onion, .i2p, OpenNIC',
+      desc: 'Проксировать сайты в зонах альтернативных сетей (OpenNIC, EmerCoin, I2P, Tor).',
+      order: 8.5,
+    },
+    replaceDirectWith: {
+      dflt: '',
+      category: 'general',
+      label: 'заменить DIRECT на',
+      desc: 'Использовать указанную строку вместо DIRECT для неблокируемых запросов.',
+      order: 9,
+    },
+  };
+}
+
+export function getDefaults() {
+  const configs = getDefaultConfigs();
+  return Object.keys(configs).reduce((acc, key) => {
+    acc[key] = configs[key].dflt;
+    return acc;
+  }, {});
+}
+
+export function createPacModifiers(mods = {}) {
+  mods = mods || {};
+  const configs = getDefaultConfigs();
+  const ifNoMods = Object.keys(configs).every((dProp) => {
+    const ifDflt = !(dProp in mods && Boolean(configs[dProp].dflt) !== Boolean(mods[dProp]));
+    const ifMods = configs[dProp].ifDfltMods;
+    return ifDflt ? !ifMods : ifMods;
+  });
+
+  const defaults = getDefaults();
+  const self = {
+    ifProxyHttpsUrlsOnly: mods.ifProxyHttpsUrlsOnly !== undefined ? Boolean(mods.ifProxyHttpsUrlsOnly) : defaults.ifProxyHttpsUrlsOnly,
+    ifUseSecureProxiesOnly: mods.ifUseSecureProxiesOnly !== undefined ? Boolean(mods.ifUseSecureProxiesOnly) : defaults.ifUseSecureProxiesOnly,
+    ifProhibitDns: mods.ifProhibitDns !== undefined ? Boolean(mods.ifProhibitDns) : defaults.ifProhibitDns,
+    ifProxyOrDie: mods.ifProxyOrDie !== undefined ? Boolean(mods.ifProxyOrDie) : defaults.ifProxyOrDie,
+    ifUsePacScriptProxies: mods.ifUsePacScriptProxies !== undefined ? Boolean(mods.ifUsePacScriptProxies) : defaults.ifUsePacScriptProxies,
+    ifUseLocalTor: Boolean(mods.ifUseLocalTor),
+    ifUseLocalWarp: Boolean(mods.ifUseLocalWarp),
+    ifMindExceptions: mods.ifMindExceptions !== false,
+    ifMindWhitelist: Boolean(mods.ifMindWhitelist),
+    ifUseOwnProxiesOnlyForOwnSites: Boolean(mods.ifUseOwnProxiesOnlyForOwnSites),
+    customProxyStringRaw: mods.customProxyStringRaw || '',
+    ifProxyMoreDomains: Boolean(mods.ifProxyMoreDomains),
+    replaceDirectWith: mods.replaceDirectWith || '',
+    exceptions: mods.exceptions || {},
+    whitelist: mods.whitelist || [],
+    ifNoMods,
+  };
+
+  let customProxyArray = [];
+  if (self.customProxyStringRaw) {
+    customProxyArray = self.customProxyStringRaw
+      .replace(/#.*$/gm, '')
+      .split(/(?:\s*(?:;\r?\n)+\s*|\r?\n+|;\s*)+/g)
+      .map((p) => p.trim())
+      .filter((p) => p && /\s+/g.test(p));
+    if (self.ifUseSecureProxiesOnly) {
+      customProxyArray = customProxyArray.filter((pStr) => /^HTTPS\s/i.test(pStr));
+    }
+  }
+
+  if (self.ifUseLocalWarp) {
+    self.warpPoints = ['SOCKS5 localhost:40000', 'HTTPS localhost:40000'];
+    customProxyArray.push(...self.warpPoints);
+  }
+  if (self.ifUseLocalTor) {
+    self.torPoints = ['SOCKS5 localhost:9150', 'SOCKS5 localhost:9050'];
+    customProxyArray.push(...self.torPoints);
+  }
+
+  // Handle and sanitize protected proxies (strip user:pass@ for PAC compatibility and normalize HTTP -> PROXY)
+  customProxyArray = customProxyArray.map((proxyScheme) => {
+    let scheme = proxyScheme;
+    if (scheme.includes('@')) {
+      const proxy = utils.parseProxyScheme(scheme);
+      let proto = proxy.type.toUpperCase();
+      if (proto === 'HTTP') proto = 'PROXY';
+      else if (proto === 'SOCKS4') proto = 'SOCKS';
+      return `${proto} ${proxy.hostname}:${proxy.port || '443'}`;
+    }
+    const parts = scheme.split(/\s+/);
+    if (parts[0] && parts[0].toUpperCase() === 'HTTP') {
+      return `PROXY ${parts.slice(1).join(' ')}`;
+    }
+    return scheme;
+  });
+
+  self.filteredCustomsString = '';
+  if (customProxyArray.length) {
+    self.customProxyArray = customProxyArray;
+    self.filteredCustomsString = customProxyArray.join('; ');
+  } else {
+    if (!self.ifUsePacScriptProxies) {
+      return [new TypeError('Нет ни одного прокси, удовлетворяющего вашим требованиям!')];
+    }
+    self.customProxyArray = false;
+  }
+
+  self.included = [];
+  self.excluded = [];
+  if (self.ifProxyMoreDomains) {
+    self.moreDomains = [
+      'onion', 'i2p',
+      'bbs', 'chan', 'dyn', 'free', 'geek', 'gopher', 'indy',
+      'libre', 'neo', 'null', 'o', 'oss', 'oz', 'parody', 'pirate',
+      'bazar', 'bit', 'coin', 'emc', 'fur', 'ku', 'lib', 'te', 'ti', 'uu'
+    ];
+  }
+
+  return [null, self];
+}
+
+export function cookPac(pacData, pacMods) {
+  if (!pacData) return '';
+  pacData = pacData.replace(new RegExp(KITCHEN_STARTS_MARK + '[\\s\\S]*$', 'g'), '').trim();
+
+  if (pacMods.ifNoMods) {
+    return pacData;
+  }
+
+  let generatedPac = `${KITCHEN_STARTS_MARK}
+;(function(global) {
+  "use strict";
+  const originalFindProxyForURL = typeof FindProxyForURL === 'function' ? FindProxyForURL : function() { return "DIRECT"; };
+  let tmp = function(url, host) {
+    const dotHost = '.' + host;
+`;
+
+  if (pacMods.ifMindWhitelist && pacMods.whitelist && pacMods.whitelist.length) {
+    generatedPac += `
+    const ifWhitelisted = ${JSON.stringify(pacMods.whitelist)}.some((whiteHost) => {
+      const clean = whiteHost.replace(/^\\*\\.?/, '').replace(/^\\./, '');
+      return dotHost.endsWith('.' + clean);
+    });
+    if (!ifWhitelisted) {
+      return 'DIRECT';
+    }
+`;
+  }
+
+  if (pacMods.ifProhibitDns) {
+    generatedPac += `
+    global.dnsResolve = function(h) { return null; };
+`;
+  }
+
+  if (pacMods.ifProxyHttpsUrlsOnly) {
+    generatedPac += `
+    if (!url.startsWith("https")) {
+      return "DIRECT";
+    }
+`;
+  }
+
+  if (pacMods.ifUseLocalTor && pacMods.torPoints) {
+    generatedPac += `
+    if (host.endsWith(".onion")) {
+      return "${pacMods.torPoints.join('; ')}";
+    }
+`;
+  }
+
+  const directIfAllowed = pacMods.ifProxyOrDie ? '""/* Not allowed */' : '"DIRECT"';
+  generatedPac += `
+    const directIfAllowed = ${directIfAllowed};
+    ${pacMods.filteredCustomsString ? `const filteredCustomProxies = "${pacMods.filteredCustomsString}";` : ''}
+    const pacScriptProxies = originalFindProxyForURL(url, host)${
+      pacMods.ifProxyOrDie
+        ? '.replace(/DIRECT/g, "")'
+        : ' + "; " + directIfAllowed'
+    };
+    const proxiedDestination = ${
+      pacMods.filteredCustomsString
+        ? 'filteredCustomProxies + "; " + directIfAllowed'
+        : 'pacScriptProxies'
+    };
+`;
+
+  let finalExceptions = {};
+  if (pacMods.ifProxyMoreDomains && pacMods.moreDomains) {
+    finalExceptions = pacMods.moreDomains.reduce((acc, tld) => {
+      acc['*.' + tld] = true;
+      return acc;
+    }, finalExceptions);
+  }
+  if (pacMods.ifMindExceptions && pacMods.exceptions) {
+    Object.assign(finalExceptions, pacMods.exceptions);
+  }
+
+  const ifExceptions = Object.keys(finalExceptions).length;
+  if (ifExceptions) {
+    const exactMap = {};
+    const wildcards = [];
+
+    for (const key in finalExceptions) {
+      if (Object.prototype.hasOwnProperty.call(finalExceptions, key)) {
+        const isProxy = Boolean(finalExceptions[key]);
+        const clean = key.toLowerCase().trim();
+        if (clean.startsWith('*.')) {
+          wildcards.push({ domain: clean.slice(2), isProxy });
+        } else if (clean.startsWith('.')) {
+          wildcards.push({ domain: clean.slice(1), isProxy });
+        } else {
+          exactMap[clean] = isProxy ? 1 : 0;
+        }
+      }
+    }
+
+    generatedPac += `
+    /* EXCEPTIONS - Instant O(1) Hash Map + Wildcard checks */
+    const excExact = ${JSON.stringify(exactMap)};
+    const excWild = ${JSON.stringify(wildcards)};
+
+    // 1. Direct match or parent domain suffix lookup in Hash Map O(1)
+    if (excExact[host] !== undefined) {
+      if (excExact[host] === 1) {
+        return proxiedDestination;
+      } else {
+        return "DIRECT";
+      }
+    }
+
+    const hostParts = host.split('.');
+    for (let pIdx = 1; pIdx < hostParts.length; pIdx++) {
+      const parentDomain = hostParts.slice(pIdx).join('.');
+      if (excExact[parentDomain] !== undefined) {
+        if (excExact[parentDomain] === 1) {
+          return proxiedDestination;
+        } else {
+          return "DIRECT";
+        }
+      }
+    }
+
+    // 2. Wildcard matches (if any)
+    for (let wIdx = 0; wIdx < excWild.length; wIdx++) {
+      const wRule = excWild[wIdx];
+      if (dotHost.endsWith('.' + wRule.domain)) {
+        if (wRule.isProxy) {
+          return proxiedDestination;
+        } else {
+          return "DIRECT";
+        }
+      }
+    }
+`;
+  }
+
+  if (!pacMods.ifUseSecureProxiesOnly && !pacMods.filteredCustomsString && pacMods.ifUsePacScriptProxies) {
+    generatedPac += `
+    return [pacScriptProxies, directIfAllowed].filter((p) => p).join("; ") || "DIRECT";
+  };
+`;
+  } else {
+    generatedPac += `
+    let pacProxyArray = pacScriptProxies.split(/(?:\\s*;\\s*)+/g).filter((p) => p);
+    const ifNoProxies = pacProxyArray${pacMods.ifProxyOrDie ? '.length === 0' : '.every((p) => /^DIRECT$/i.test(p))'};
+    if (ifNoProxies) {
+      return "DIRECT";
+    }
+    return ${
+      pacMods.filteredCustomsString && !pacMods.ifUseOwnProxiesOnlyForOwnSites
+        ? 'filteredCustomProxies + "; " + '
+        : ''
+    } ${
+      pacMods.ifUsePacScriptProxies
+        ? pacMods.ifUseSecureProxiesOnly
+          ? 'pacProxyArray.filter((pStr) => /^HTTPS\\s/i.test(pStr)).join("; ") + "; " + '
+          : 'pacScriptProxies + "; " + '
+        : '"" + '
+    } directIfAllowed;
+  };
+`;
+  }
+
+  if (pacMods.replaceDirectWith) {
+    generatedPac += `
+  const oldTmp = tmp;
+  tmp = function(url, host) {
+    return oldTmp.call(this, url, host).replace(/(;|^)\\s*DIRECT\\s*(?=;|$)/g, "$1${pacMods.replaceDirectWith}");
+  };
+`;
+  }
+
+  generatedPac += `
+  if (typeof global !== 'undefined') {
+    global.FindProxyForURL = tmp;
+  }
+  if (typeof self !== 'undefined') {
+    self.FindProxyForURL = tmp;
+  }
+})(this);
+`;
+
+  return pacData + generatedPac;
+}
+
+// In-memory cache for ultra-fast O(1) reads without disk LevelDB deserialization
+let _cachedRawMods = null;
+let _cachedParsedMods = null;
+let _cachedStats = null;
+
+export function calculateExceptionStats(exceptions = {}, whitelist = []) {
+  let includedCount = 0;
+  let excludedCount = 0;
+  if (exceptions && typeof exceptions === 'object') {
+    const keys = Object.keys(exceptions);
+    for (let i = 0; i < keys.length; i++) {
+      const val = exceptions[keys[i]];
+      if (val === true) includedCount++;
+      else if (val === false) excludedCount++;
+    }
+  }
+  const whitelistCount = (whitelist && whitelist.length) || 0;
+  return { includedCount, excludedCount, whitelistCount };
+}
+
+export function getExceptionStats(exceptions = {}, whitelist = []) {
+  if (_cachedStats) return _cachedStats;
+  _cachedStats = calculateExceptionStats(exceptions, whitelist);
+  return _cachedStats;
+}
+
+export const pacKitchen = {
+  async getPacMods() {
+    if (_cachedParsedMods) {
+      return _cachedParsedMods;
+    }
+    const [rawMods, savedStats] = await Promise.all([
+      storage.get(MODS_KEY, {}),
+      storage.get('pac-exception-stats', null),
+    ]);
+    _cachedRawMods = rawMods;
+    await updateProxyCredentialsFromRaw(rawMods.customProxyStringRaw || '');
+    const [, mods] = createPacModifiers(rawMods);
+    _cachedParsedMods = mods || getDefaults();
+    if (savedStats && typeof savedStats === 'object' && savedStats.includedCount !== undefined) {
+      _cachedStats = savedStats;
+    } else {
+      _cachedStats = calculateExceptionStats(rawMods.exceptions, rawMods.whitelist);
+      storage.set('pac-exception-stats', _cachedStats).catch(() => {});
+    }
+    return _cachedParsedMods;
+  },
+
+  async savePacMods(newMods) {
+    const [err, parsedMods] = createPacModifiers(newMods);
+    if (err) {
+      throw err;
+    }
+    _cachedRawMods = newMods;
+    _cachedParsedMods = parsedMods;
+    _cachedStats = calculateExceptionStats(newMods.exceptions, newMods.whitelist);
+    await Promise.all([
+      updateProxyCredentialsFromRaw(newMods.customProxyStringRaw || ''),
+      storage.set(MODS_KEY, newMods),
+      storage.set('pac-exception-stats', _cachedStats),
+    ]);
+    return parsedMods;
+  },
+
+  getCachedStats() {
+    if (_cachedStats) return _cachedStats;
+    if (_cachedParsedMods) {
+      _cachedStats = calculateExceptionStats(_cachedParsedMods.exceptions, _cachedParsedMods.whitelist);
+      return _cachedStats;
+    }
+    return { includedCount: 0, excludedCount: 0, whitelistCount: 0 };
+  },
+
+  invalidateCache() {
+    _cachedRawMods = null;
+    _cachedParsedMods = null;
+    _cachedStats = null;
+  },
+
+  cook: cookPac,
+};

@@ -1,15 +1,12 @@
 {
-  "name": "subjective-good-is-evil",
-  "version": "1.0.0",
-  "description": "",
+  "name": "anticheburnet",
+  "version": "2.2.3",
+  "description": "АнтиЧебурнет - расширение для обхода интернет-цензуры на базе PAC-скриптов (Manifest V3)",
   "scripts": {
     "postinstall": "opencollective postinstall"
   },
   "author": "anticensority+owners@googlegroups.com",
-  "license": "ISC",
-  "dependencies": {
-    "opencollective": "^1.0.3"
-  },
+  "license": "GPL-3.0-or-later",
   "collective": {
     "type": "opencollective",
     "url": "https://opencollective.com/anticensority"

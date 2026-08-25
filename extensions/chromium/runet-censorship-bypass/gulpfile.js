@@ -56,52 +56,19 @@ const contexts = require('./src/templates-data').contexts;
 const excFolder = (name) => [`!./src/**/${name}`, `!./src/**/${name}/**/*`];
 const excluded = [ ...excFolder('test') , ...excFolder('node_modules'), ...excFolder('src') ];
 
-const miniDst = './build/extension-mini';
+const commonSrc = './src/extension-common/**/*';
 const fullDst = './build/extension-full';
-const betaDst = './build/extension-beta';
-const firefoxDst = './build/extension-firefox';
-
-const commonSrc = './src/extension-common/**/*';;
-const miniSrc = './src/extension-mini/**/*';
-const fullSrc = './src/extension-full/**/*';
-const firefoxSrc = './src/extension-firefox/**/*';
-
-const joinSrc = (...args) => [...args, ...excluded];
-
-const copyMini = function(cb) {
-
-  gulp.src(joinSrc(commonSrc, miniSrc))
-    //.pipe(changed(miniDst))
-    .pipe(templatePlugin(contexts.mini))
-    .pipe(gulp.dest(miniDst))
-    .on('end', cb);
-};
 
 const copyFull = function(cb) {
-
-  gulp.src(joinSrc(commonSrc, fullSrc))
-    //.pipe(changed(fullDst))
+  gulp.src([commonSrc, ...excluded])
     .pipe(templatePlugin(contexts.full))
     .pipe(gulp.dest(fullDst))
     .on('end', cb);
-
 };
 
-const copyBeta = function(cb) {
-
-    gulp.src(joinSrc(commonSrc, fullSrc))
-    //.pipe(changed(fullDst))
-    .pipe(templatePlugin(contexts.beta))
-    .pipe(gulp.dest(betaDst))
-    .on('end', cb);
-
-};
-
-const buildAll = gulp.series(clean, gulp.parallel(copyMini, copyFull, copyBeta));
-const buildBeta = copyBeta;
+const buildAll = gulp.series(clean, copyFull);
 
 module.exports = {
   default: buildAll,
   buildAll,
-  buildBeta,
 };

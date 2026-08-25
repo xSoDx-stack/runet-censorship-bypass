@@ -3,4 +3,3 @@ node_modules_linux
 node_modules_win
 npm-debug.log
 *.swp
-build/
