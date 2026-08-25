@@ -4,7 +4,6 @@ import { storage } from './storage.js';
 import { pacSync } from './pac-sync.js';
 import { pacKitchen } from './pac-kitchen.js';
 import { ipToHost } from './ip-to-host.js';
-import { initProxyAuth } from './proxy-auth.js';
 import { errorHandlers } from './error-handlers.js';
 import { logger } from './logger.js';
 
@@ -32,10 +31,10 @@ class AppStateManager {
       this._initPromise = (async () => {
         try {
           // 1. Initialize independent storage-backed singletons concurrently
+          // (pacKitchen.getPacMods already restores proxyCredentialsMap from customProxyStringRaw)
           await Promise.all([
             logger.init(),
             ipToHost.init(),
-            initProxyAuth(),
             errorHandlers.init(),
             pacKitchen.getPacMods(),
           ]);
