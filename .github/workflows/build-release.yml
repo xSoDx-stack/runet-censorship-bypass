@@ -25,12 +25,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: 'npm'
-          cache-dependency-path: extensions/chromium/runet-censorship-bypass/package-lock.json
 
       - name: Install dependencies
         working-directory: extensions/chromium/runet-censorship-bypass
-        run: npm ci
+        run: npm install --no-audit --no-fund
 
       - name: Build extension
         working-directory: extensions/chromium/runet-censorship-bypass
@@ -47,7 +45,8 @@ jobs:
         run: |
           cd extensions/chromium/runet-censorship-bypass/build/extension-full
           zip -r "$GITHUB_WORKSPACE/anticheburnet-v${{ env.VERSION }}-chrome-mv3.zip" .
-          ls -la "$GITHUB_WORKSPACE"
+          cd "$GITHUB_WORKSPACE"
+          ls -la
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
