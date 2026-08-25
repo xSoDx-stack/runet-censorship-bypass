@@ -1,11 +1,11 @@
 {
   "name": "anticheburnet",
-  "version": "2.2.12",
+  "version": "2.2.13",
   "description": "АнтиЧебурнет - расширение для обхода интернет-цензуры (Manifest V3)",
   "scripts": {
-    "lint": "eslint ./src/**/*.js --ignore-pattern vendor",
+    "lint": "eslint ./src/**/*.js ./test/**/*.js --ignore-pattern vendor",
     "gulp": "gulp",
-    "test": "mocha --recursive ./src/**/test/*",
+    "test": "mocha --recursive test/**/*.test.js",
     "start": "npm run release",
     "release": "gulp buildAll"
   },

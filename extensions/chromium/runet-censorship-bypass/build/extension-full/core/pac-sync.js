@@ -191,32 +191,35 @@ class PacSyncManager {
     );
   }
 
-  async applyPacData(pacRawData) {
-    this.revision++;
+  async applyPacData(candidateRawData) {
     const pacMods = await pacKitchen.getPacMods();
-    const cooked = pacKitchen.cook(pacRawData, pacMods);
-    this.cookedPacData = cooked;
+    const candidateCooked = pacKitchen.cook(candidateRawData, pacMods);
 
-    return new Promise((resolve, reject) => {
+    await new Promise((resolve, reject) => {
       const config = {
         mode: 'pac_script',
         pacScript: {
-          data: cooked,
+          data: candidateCooked,
           mandatory: false,
         },
       };
 
       chrome.proxy.settings.set(
         { value: config, scope: 'regular' },
-        async () => {
+        () => {
           if (chrome.runtime.lastError) {
             return reject(new Error(chrome.runtime.lastError.message));
           }
-          await this.updateControlState();
           resolve();
         }
       );
     });
+
+    // Transaction Commit on success
+    this.revision++;
+    this.rawPacData = candidateRawData;
+    this.cookedPacData = candidateCooked;
+    await this.updateControlState();
   }
 
   async syncWithPacProvider({ key = this.currentPacProviderKey, ifUnattended = false } = {}) {
@@ -240,20 +243,46 @@ class PacSyncManager {
 
     try {
       console.log(`[PAC Sync] Downloading PAC for provider "${key}"...`);
-      const pacData = await this.downloadPacFromProvider(provider);
-      this.rawPacData = pacData;
-      this.currentPacProviderKey = key;
+      const candidateRaw = await this.downloadPacFromProvider(provider);
 
       console.log('[PAC Sync] Cooking and applying PAC script...');
-      await this.applyPacData(pacData);
+      const pacMods = await pacKitchen.getPacMods();
+      const candidateCooked = pacKitchen.cook(candidateRaw, pacMods);
+
+      await new Promise((resolve, reject) => {
+        const config = {
+          mode: 'pac_script',
+          pacScript: {
+            data: candidateCooked,
+            mandatory: false,
+          },
+        };
+
+        chrome.proxy.settings.set(
+          { value: config, scope: 'regular' },
+          () => {
+            if (chrome.runtime.lastError) {
+              return reject(new Error(chrome.runtime.lastError.message));
+            }
+            resolve();
+          }
+        );
+      });
+
+      // Transaction Commit on success
+      this.revision++;
+      this.rawPacData = candidateRaw;
+      this.cookedPacData = candidateCooked;
+      this.currentPacProviderKey = key;
 
       const now = Date.now();
       this.lastPacUpdateStamp = now;
       this.providerUpdateStamps[key] = now;
       await this.persistState();
+      await this.updateControlState();
 
       console.log('[PAC Sync] Successfully updated PAC!');
-      logger.info('pac', `PAC-скрипт "${key}" успешно обновлён`, `Размер PAC: ${(pacData.length / 1024).toFixed(1)} КБ`, {
+      logger.info('pac', `PAC-скрипт "${key}" успешно обновлён`, `Размер PAC: ${(candidateRaw.length / 1024).toFixed(1)} КБ`, {
         provider: key,
         lastPacUpdateStamp: now,
       });
@@ -275,26 +304,26 @@ class PacSyncManager {
   }
 
   async installPac(key) {
-    this.currentPacProviderKey = key;
     await this.syncWithPacProvider({ key, ifUnattended: false });
   }
 
   async clearPac() {
+    await new Promise((resolve, reject) => {
+      chrome.proxy.settings.clear({ scope: 'regular' }, () => {
+        if (chrome.runtime.lastError) {
+          return reject(new Error(chrome.runtime.lastError.message));
+        }
+        resolve();
+      });
+    });
+
+    // Transaction Commit on success
     this.revision++;
     this.currentPacProviderKey = 'none';
     this.rawPacData = '';
     this.cookedPacData = '';
-
-    return new Promise((resolve, reject) => {
-      chrome.proxy.settings.clear({ scope: 'regular' }, async () => {
-        if (chrome.runtime.lastError) {
-          return reject(new Error(chrome.runtime.lastError.message));
-        }
-        await this.persistState();
-        await this.updateControlState();
-        resolve();
-      });
-    });
+    await this.persistState();
+    await this.updateControlState();
   }
 
   async reapplyCurrentPac() {

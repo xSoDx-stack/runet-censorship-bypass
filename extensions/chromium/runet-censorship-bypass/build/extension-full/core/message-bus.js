@@ -188,7 +188,6 @@ export function setupMessageBus() {
         }
 
         case 'SET_RAW_PAC': {
-          pacSync.rawPacData = message.pacData;
           await pacSync.applyPacData(message.pacData);
           await pacSync.persistState();
           return { success: true };

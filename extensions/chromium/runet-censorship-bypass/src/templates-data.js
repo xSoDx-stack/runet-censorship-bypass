@@ -8,7 +8,7 @@ const pacUrls = [
 ];
 
 const commonContext = {
-  version: '2.2.12',
+  version: '2.2.13',
   anticensorityPacUrls: [
     ...pacUrls,
   ],
@@ -39,7 +39,7 @@ exports.contexts.beta = Object.assign({}, commonContext, {
     'https://raw.githubusercontent.com/anticensority/for-testing/master/anticensority.pac',
     'https://anticensority.github.io/for-testing/anticensority.pac',
   ],
-  version: '2.2.12',
+  version: '2.2.13',
   versionSuffix: '',
   nameSuffixEn: ' FOR TESTING',
   nameSuffixRu: ' ДЛЯ ТЕСТОВ',

@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   build:
-    name: Build Chrome Extension
+    name: Lint, Test, Build & Release
     runs-on: ubuntu-latest
 
     steps:
@@ -29,6 +29,14 @@ jobs:
       - name: Install dependencies
         working-directory: extensions/chromium/runet-censorship-bypass
         run: npm install --no-audit --no-fund
+
+      - name: Run code linter
+        working-directory: extensions/chromium/runet-censorship-bypass
+        run: npm run lint
+
+      - name: Run automated unit tests
+        working-directory: extensions/chromium/runet-censorship-bypass
+        run: npm test
 
       - name: Build extension
         working-directory: extensions/chromium/runet-censorship-bypass

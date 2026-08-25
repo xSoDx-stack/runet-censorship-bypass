@@ -4,6 +4,7 @@ import { utils } from './utils.js';
 import { registerTemporaryCredentials, unregisterTemporaryCredentials } from './proxy-auth.js';
 import { logger } from './logger.js';
 import { pacSync } from './pac-sync.js';
+import { pacKitchen } from './pac-kitchen.js';
 
 // Mutex queue to serialize health check probes and prevent race conditions on chrome.proxy.settings
 let checkQueue = Promise.resolve();
@@ -68,34 +69,41 @@ async function executeSingleProxyHealthCheck(proxyString) {
     ? `SOCKS5 ${parsed.hostname}:${parsed.port}; SOCKS ${parsed.hostname}:${parsed.port}`
     : `${pacKeyword} ${parsed.hostname}:${parsed.port}`;
 
-  // 3. Capture baseline revision and active PAC code to ensure zero disruption to browsing
-  const startRevision = pacSync.getRevision();
-  const basePacScript = pacSync.cookedPacData && pacSync.currentPacProviderKey !== 'none'
-    ? pacSync.cookedPacData
-    : 'function FindProxyForURL(url, host) { return "DIRECT"; }';
-
-  // 4. Construct layered Test PAC:
-  // - Probe domains (1.1.1.1, cloudflare.com, etc.) route EXCLUSIVELY through the test proxy.
-  // - ALL other domains in the browser delegate directly to the active base PAC script!
-  const testPac = `
-(function(global) {
-  "use strict";
-
-  // Base PAC script
-  ${basePacScript}
-
-  var baseFindProxy = (typeof FindProxyForURL === 'function') ? FindProxyForURL : function() { return "DIRECT"; };
-
-  function InterceptFindProxyForURL(url, host) {
-    if (host === '1.1.1.1' || host === 'cloudflare.com' || host === 'cp.cloudflare.com' || host === 'connectivitycheck.gstatic.com' || host === 'dns.google') {
-      return "${testProxyScheme}";
+  // 3. Resolve active base PAC script with full top-level scope preservation
+  let basePacScript = '';
+  if (pacSync.currentPacProviderKey !== 'none') {
+    if (pacSync.cookedPacData) {
+      basePacScript = pacSync.cookedPacData;
+    } else if (pacSync.rawPacData) {
+      try {
+        const pacMods = await pacKitchen.getPacMods();
+        basePacScript = pacKitchen.cook(pacSync.rawPacData, pacMods);
+      } catch {
+        basePacScript = pacSync.rawPacData;
+      }
     }
-    return baseFindProxy(url, host);
+  }
+  if (!basePacScript || !basePacScript.trim()) {
+    basePacScript = 'function FindProxyForURL(url, host) { return "DIRECT"; }';
   }
 
-  if (typeof global !== 'undefined') global.FindProxyForURL = InterceptFindProxyForURL;
-  if (typeof self !== 'undefined') self.FindProxyForURL = InterceptFindProxyForURL;
-})(this);
+  // 4. Construct layered Test PAC:
+  // - Top-level evaluation preserves global variables (e.g. domains map in Antizapret)
+  // - Intercepts probe domains (1.1.1.1, cloudflare.com, etc.) through candidate test proxy
+  // - Delegates ALL other traffic directly to active FindProxyForURL
+  const testPac = `
+${basePacScript}
+
+var __testProbeFindProxy = (typeof FindProxyForURL === 'function')
+  ? FindProxyForURL
+  : function(url, host) { return "DIRECT"; };
+
+function FindProxyForURL(url, host) {
+  if (host === '1.1.1.1' || host === 'cloudflare.com' || host === 'cp.cloudflare.com' || host === 'connectivitycheck.gstatic.com' || host === 'dns.google') {
+    return "${testProxyScheme}";
+  }
+  return __testProbeFindProxy(url, host);
+}
 `;
 
   const testConfig = {
