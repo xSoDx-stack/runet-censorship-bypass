@@ -1,6 +1,6 @@
 {
   "name": "anticheburnet",
-  "version": "2.2.3",
+  "version": "2.2.4",
   "description": "АнтиЧебурнет - расширение для обхода интернет-цензуры на базе PAC-скриптов (Manifest V3)",
   "scripts": {
     "postinstall": "opencollective postinstall"

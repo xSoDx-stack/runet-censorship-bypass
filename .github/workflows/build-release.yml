@@ -1,0 +1,69 @@
+name: Build and Release AntiCheburnet
+
+on:
+  push:
+    branches:
+      - main
+      - development
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Chrome Extension
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: extensions/chromium/runet-censorship-bypass/package-lock.json
+
+      - name: Install dependencies
+        working-directory: extensions/chromium/runet-censorship-bypass
+        run: npm ci
+
+      - name: Build extension
+        working-directory: extensions/chromium/runet-censorship-bypass
+        run: npm run release
+
+      - name: Extract version from manifest.json
+        id: get_version
+        run: |
+          VERSION=$(node -p "require('./extensions/chromium/runet-censorship-bypass/build/extension-full/manifest.json').version")
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Extracted version: $VERSION"
+
+      - name: Create ZIP archive for Chrome Web Store
+        run: |
+          cd extensions/chromium/runet-censorship-bypass/build/extension-full
+          zip -r ../../../../anticheburnet-v${{ env.VERSION }}-chrome-mv3.zip .
+          cd ../../../..
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: anticheburnet-v${{ env.VERSION }}-chrome-mv3
+          path: anticheburnet-v${{ env.VERSION }}-chrome-mv3.zip
+          retention-days: 30
+
+      - name: Publish GitHub Release on Tag or Manual Dispatch
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "АнтиЧебурнет v${{ env.VERSION }}"
+          tag_name: "v${{ env.VERSION }}"
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            anticheburnet-v${{ env.VERSION }}-chrome-mv3.zip
