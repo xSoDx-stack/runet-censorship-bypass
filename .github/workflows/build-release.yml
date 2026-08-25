@@ -21,10 +21,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 20.x
+      - name: Setup Node.js 22.x
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'npm'
           cache-dependency-path: extensions/chromium/runet-censorship-bypass/package-lock.json
 
@@ -46,8 +46,8 @@ jobs:
       - name: Create ZIP archive for Chrome Web Store
         run: |
           cd extensions/chromium/runet-censorship-bypass/build/extension-full
-          zip -r ../../../../anticheburnet-v${{ env.VERSION }}-chrome-mv3.zip .
-          cd ../../../..
+          zip -r "$GITHUB_WORKSPACE/anticheburnet-v${{ env.VERSION }}-chrome-mv3.zip" .
+          ls -la "$GITHUB_WORKSPACE"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
