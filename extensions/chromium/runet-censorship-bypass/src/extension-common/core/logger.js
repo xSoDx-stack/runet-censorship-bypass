@@ -6,6 +6,68 @@ const STORAGE_LOGS_KEY = 'antiCensorLogs';
 const MAX_LOGS_LIMIT = 30;
 
 /**
+ * Sanitize strings to redact passwords, auth credentials, tokens, and cookies
+ * @param {string} str 
+ * @returns {string} Sanitized string
+ */
+export function sanitizeLogString(str) {
+  if (!str || typeof str !== 'string') return str;
+
+  return str
+    // Mask user:pass@host in proxy or URL strings (e.g. HTTPS user:password@host:port)
+    .replace(/([a-zA-Z0-9+.-]+:\/\/)?([^:\s/@]+):([^@\s/]+)@/g, (match, proto) => {
+      const p = proto || '';
+      return `${p}***:***@`;
+    })
+    // Mask Basic authentication
+    .replace(/(Authorization:\s*Basic\s+)[^\s]+/gi, '$1***')
+    .replace(/(Basic\s+)[a-zA-Z0-9+/=]{10,}/gi, '$1***')
+    // Mask Bearer tokens
+    .replace(/(Bearer\s+)[a-zA-Z0-9._~+/-]{10,}/gi, '$1***')
+    // Mask URL query params with credentials
+    .replace(/([?&](?:password|pass|pwd|token|secret|auth|key|apiKey|cookie)=)[^&#\s]+/gi, '$1***');
+}
+
+/**
+ * Recursively sanitize objects, arrays, and primitives to remove sensitive data
+ * @param {any} data 
+ * @returns {any} Cleaned, sanitized data
+ */
+export function sanitizeLogData(data) {
+  if (data === null || data === undefined) {
+    return data;
+  }
+
+  if (typeof data === 'string') {
+    return sanitizeLogString(data);
+  }
+
+  if (typeof data === 'number' || typeof data === 'boolean') {
+    return data;
+  }
+
+  if (Array.isArray(data)) {
+    return data.map((item) => sanitizeLogData(item));
+  }
+
+  if (typeof data === 'object') {
+    const cleanObj = {};
+    const SENSITIVE_KEYS = /^(password|pass|pwd|secret|token|auth|authorization|cookie|cookies|credentials|proxycredentials|rawauth)$/i;
+
+    for (const [key, value] of Object.entries(data)) {
+      if (SENSITIVE_KEYS.test(key)) {
+        cleanObj[key] = '***';
+      } else {
+        cleanObj[key] = sanitizeLogData(value);
+      }
+    }
+    return cleanObj;
+  }
+
+  return sanitizeLogString(String(data));
+}
+
+/**
  * Structured Logging & Diagnostics Engine for Manifest V3
  */
 class LoggerManager {
@@ -29,7 +91,7 @@ class LoggerManager {
   }
 
   /**
-   * Add a new log entry
+   * Add a new log entry with automatic sanitization
    * @param {Object} entry
    * @param {'error'|'warn'|'info'} [entry.level='error']
    * @param {'network'|'proxy'|'pac'|'auth'|'system'} [entry.category='system']
@@ -41,17 +103,21 @@ class LoggerManager {
     const timestamp = Date.now();
     const id = `${timestamp}-${Math.random().toString(36).slice(2, 7)}`;
 
-    // Clean details to ensure JSON-serializable
+    // Sanitize title and message against secrets
+    const sanitizedTitle = sanitizeLogString(String(title || 'Неизвестная ошибка'));
+    const sanitizedMessage = sanitizeLogString(String(message || ''));
+
+    // Clean and sanitize details
     let cleanDetails = null;
     if (details !== null && details !== undefined) {
       if (typeof details === 'object') {
         try {
-          cleanDetails = JSON.parse(JSON.stringify(details));
+          cleanDetails = sanitizeLogData(JSON.parse(JSON.stringify(details)));
         } catch {
-          cleanDetails = String(details);
+          cleanDetails = sanitizeLogString(String(details));
         }
       } else {
-        cleanDetails = String(details);
+        cleanDetails = sanitizeLogString(String(details));
       }
     }
 
@@ -60,8 +126,8 @@ class LoggerManager {
       timestamp,
       level,
       category,
-      title: String(title || 'Неизвестная ошибка'),
-      message: String(message || ''),
+      title: sanitizedTitle,
+      message: sanitizedMessage,
       details: cleanDetails,
     };
 
@@ -80,7 +146,7 @@ class LoggerManager {
       return recent;
     }
 
-    // Newest entry added to the very top; oldest entries beyond limit are removed
+    // Newest entry added to the top; maintain MAX_LOGS_LIMIT
     this.logs.unshift(logEntry);
     while (this.logs.length > MAX_LOGS_LIMIT) {
       this.logs.pop();
@@ -103,7 +169,7 @@ class LoggerManager {
   }
 
   /**
-   * Debounced persistence to avoid storage rate limits
+   * Debounced persistence to storage
    */
   scheduleSave() {
     clearTimeout(this.saveTimeout);
@@ -180,7 +246,7 @@ class LoggerManager {
   }
 
   /**
-   * Export logs as a readable text report
+   * Export logs as a clean, sanitized text report
    */
   exportText(category = 'all', search = '') {
     const logs = this.getLogs({ category, search, limit: MAX_LOGS_LIMIT });
@@ -198,12 +264,13 @@ class LoggerManager {
       const timeStr = new Date(item.timestamp).toLocaleString('ru-RU');
       const countStr = item.count > 1 ? ` (повторено ${item.count} раз)` : '';
       report += `[${index + 1}] [${timeStr}] [${item.level.toUpperCase()}] [${item.category.toUpperCase()}]${countStr}\n`;
-      report += `  Заголовок: ${item.title}\n`;
+      report += `  Заголовок: ${sanitizeLogString(item.title)}\n`;
       if (item.message) {
-        report += `  Сообщение: ${item.message}\n`;
+        report += `  Сообщение: ${sanitizeLogString(item.message)}\n`;
       }
       if (item.details) {
-        report += `  Детали: ${typeof item.details === 'object' ? JSON.stringify(item.details, null, 2) : item.details}\n`;
+        const sanitizedDetails = sanitizeLogData(item.details);
+        report += `  Детали: ${typeof sanitizedDetails === 'object' ? JSON.stringify(sanitizedDetails, null, 2) : sanitizedDetails}\n`;
       }
       report += `-------------------------------------------------------\n`;
     });

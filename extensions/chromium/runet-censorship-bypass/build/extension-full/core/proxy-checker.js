@@ -10,8 +10,8 @@ let checkQueue = Promise.resolve();
 
 /**
  * Proxy Health Checker for Chrome MV3
- * Safely executes health probes without disrupting active browser traffic and delegating non-probe
- * requests to the active PAC script rather than leaking to DIRECT.
+ * Safely executes health probes without disrupting active browser traffic, delegating non-probe
+ * requests to the active PAC script and ensuring zero secret/password leakage into diagnostic logs.
  */
 export function checkProxyHealth(proxyString) {
   const run = () => executeSingleProxyHealthCheck(proxyString);
@@ -31,7 +31,7 @@ async function executeSingleProxyHealthCheck(proxyString) {
 
   const parsed = utils.parseProxyScheme(proxyString);
   if (!parsed.hostname || !parsed.port) {
-    logger.warn('proxy', 'Проверка прокси: неверный формат', `Не указан хост или порт для "${proxyString}"`);
+    logger.warn('proxy', 'Проверка прокси: неверный формат', 'Не указан хост или порт для проверяемого прокси');
     return { ok: false, error: 'Не указан хост или порт' };
   }
 
@@ -40,6 +40,14 @@ async function executeSingleProxyHealthCheck(proxyString) {
     logger.warn('proxy', 'Проверка прокси: неверный порт', `Номер порта ${parsed.port} вне диапазона (1-65535)`);
     return { ok: false, error: 'Неверный номер порта (1-65535)' };
   }
+
+  // Safe sanitized proxy metadata for diagnostic logging (NEVER logs credentials)
+  const proxyMeta = {
+    scheme: parsed.type || 'unknown',
+    host: parsed.hostname || 'unknown',
+    port: parsed.port || 'unknown',
+    hasAuth: Boolean(parsed.username),
+  };
 
   // 1. Register temporary credentials for test probe if present
   if (parsed.username) {
@@ -131,31 +139,31 @@ async function executeSingleProxyHealthCheck(proxyString) {
         result = { ok: true, latency };
       } else if (res && res.status === 407) {
         const msg = 'Ошибка авторизации (407 Proxy Authentication Required): неверный логин или пароль';
-        logger.warn('auth', 'Ошибка авторизации прокси (407)', msg, { proxy: proxyString });
+        logger.warn('auth', 'Ошибка авторизации прокси (407)', msg, proxyMeta);
         result = { ok: false, error: msg };
       } else {
         const msg = `Сервер вернул статус HTTP ${res ? res.status : 'нет ответа'}`;
-        logger.warn('proxy', 'Прокси вернул некорректный статус', msg, { proxy: proxyString, status: res ? res.status : null });
+        logger.warn('proxy', 'Прокси вернул некорректный статус', msg, { ...proxyMeta, status: res ? res.status : null });
         result = { ok: false, error: msg };
       }
     } catch (fetchErr) {
       clearTimeout(timer);
       if (fetchErr.name === 'AbortError') {
         const msg = 'Таймаут: прокси-сервер не ответил за 5 секунд';
-        logger.warn('proxy', 'Таймаут подключения к прокси', msg, { proxy: proxyString });
+        logger.warn('proxy', 'Таймаут подключения к прокси', msg, proxyMeta);
         result = { ok: false, error: msg };
       } else {
         const errStr = (fetchErr.message || String(fetchErr)).toLowerCase();
         let msg = '';
         if (errStr.includes('407') || errStr.includes('auth')) {
           msg = 'Ошибка авторизации (407): неверный логин или пароль';
-          logger.warn('auth', 'Ошибка авторизации', msg, { proxy: proxyString });
+          logger.warn('auth', 'Ошибка авторизации', msg, proxyMeta);
         } else if (errStr.includes('cert') || errStr.includes('tls') || errStr.includes('ssl')) {
           msg = 'Ошибка TLS/SSL: если ваш локальный прокси без SSL, выберите протокол HTTP вместо HTTPS';
-          logger.warn('proxy', 'Ошибка SSL/TLS прокси', msg, { proxy: proxyString, error: fetchErr.message });
+          logger.warn('proxy', 'Ошибка SSL/TLS прокси', msg, { ...proxyMeta, error: fetchErr.message });
         } else {
           msg = 'Не удалось подключиться к прокси. Убедитесь, что сервер запущен и выбран правильный протокол (HTTP/HTTPS/SOCKS5)';
-          logger.warn('proxy', 'Сбой подключения к прокси', msg, { proxy: proxyString, error: fetchErr.message });
+          logger.warn('proxy', 'Сбой подключения к прокси', msg, { ...proxyMeta, error: fetchErr.message });
         }
         result = { ok: false, error: msg };
       }
