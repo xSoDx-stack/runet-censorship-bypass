@@ -90,7 +90,8 @@ export const POPULAR_PRESETS = {
  */
 export function generatePacScript({
   domains = [],
-  proxies = 'HTTPS proxy.antizapret.prostovpn.org:8443; PROXY proxy.antizapret.prostovpn.org:8443; DIRECT',
+  proxies = '',
+  proxyString = '',
   fallback = 'DIRECT',
   bypassLocal = true,
   ifProxyOrDie = false,
@@ -99,13 +100,13 @@ export function generatePacScript({
 } = {}) {
   const cleanDomains = parseDomainsInput(domains);
   
-  let proxyString = (proxies || '').trim();
-  if (!proxyString) {
-    proxyString = 'DIRECT';
+  let effectiveProxy = (proxyString || proxies || 'HTTPS proxy.antizapret.prostovpn.org:8443; PROXY proxy.antizapret.prostovpn.org:8443; DIRECT').trim();
+  if (!effectiveProxy) {
+    effectiveProxy = 'DIRECT';
   }
 
   // Format fallback routing
-  const fallbackStr = ifProxyOrDie ? 'DIRECT' : (fallback || 'DIRECT');
+  const fallbackStr = ifProxyOrDie ? '' : (fallback || 'DIRECT');
 
   // Build dictionary of domains for O(1) hash lookups
   const exactMap = {};
@@ -125,8 +126,8 @@ export function generatePacScript({
 ;(function(global) {
   "use strict";
 
-  var PROXY_ROUTE = ${JSON.stringify(proxyString)};
-  var FALLBACK_ROUTE = ${ifProxyOrDie ? '"DIRECT"' : JSON.stringify(fallbackStr)};
+  var PROXY_ROUTE = ${JSON.stringify(effectiveProxy)};
+  var FALLBACK_ROUTE = ${ifProxyOrDie ? '""' : JSON.stringify(fallbackStr)};
   var IF_PROXY_HTTPS_ONLY = ${Boolean(ifProxyHttpsOnly)};
   var IF_PROHIBIT_DNS = ${Boolean(ifProhibitDns)};
   var IF_PROXY_OR_DIE = ${Boolean(ifProxyOrDie)};
@@ -264,9 +265,9 @@ export function testPacRule(pacScriptCode, testUrl) {
     }
 
     const startTime = performance.now();
-    const route = findProxyFn(cleanUrl, parsedHost) || 'DIRECT';
+    const route = findProxyFn(cleanUrl, parsedHost) || '';
     const executionTimeMs = (performance.now() - startTime).toFixed(3);
-    const isProxied = !route.trim().startsWith('DIRECT');
+    const isProxied = Boolean(route && !route.trim().startsWith('DIRECT'));
 
     return {
       success: true,

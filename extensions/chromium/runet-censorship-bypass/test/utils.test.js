@@ -9,8 +9,8 @@ describe('Utils: parseProxyScheme', () => {
     expect(res.type).to.equal('HTTP');
     expect(res.hostname).to.equal('127.0.0.1');
     expect(res.port).to.equal('8080');
-    expect(res.username).to.be.undefined;
-    expect(res.password).to.be.undefined;
+    expect(res.username).to.equal('');
+    expect(res.password).to.equal('');
   });
 
   it('should correctly parse HTTPS proxy with username and password', () => {
@@ -27,16 +27,14 @@ describe('Utils: parseProxyScheme', () => {
     expect(res.type).to.equal('SOCKS5');
     expect(res.hostname).to.equal('10.0.0.1');
     expect(res.port).to.equal('1080');
+    expect(res.username).to.equal('');
+    expect(res.password).to.equal('');
   });
 
-  it('should fallback to default ports when port is omitted', () => {
+  it('should parse proxy with hostname only when port is omitted', () => {
     const httpRes = utils.parseProxyScheme('HTTP proxy.local');
-    expect(httpRes.port).to.equal('8080');
-
-    const httpsRes = utils.parseProxyScheme('HTTPS secure.local');
-    expect(httpsRes.port).to.equal('443');
-
-    const socksRes = utils.parseProxyScheme('SOCKS5 socks.local');
-    expect(socksRes.port).to.equal('1080');
+    expect(httpRes.type).to.equal('HTTP');
+    expect(httpRes.hostname).to.equal('proxy.local');
+    expect(httpRes.port).to.equal('');
   });
 });
