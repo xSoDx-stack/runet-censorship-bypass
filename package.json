@@ -1,14 +1,16 @@
 {
   "name": "anticheburnet",
-  "version": "2.2.6",
+  "version": "2.2.7",
   "description": "АнтиЧебурнет - расширение для обхода интернет-цензуры на базе PAC-скриптов (Manifest V3)",
   "scripts": {
-    "postinstall": "opencollective postinstall"
+    "build": "npm --prefix extensions/chromium/runet-censorship-bypass run release",
+    "lint": "npm --prefix extensions/chromium/runet-censorship-bypass run lint",
+    "test": "npm --prefix extensions/chromium/runet-censorship-bypass run test"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=9.0.0"
   },
   "author": "anticensority+owners@googlegroups.com",
-  "license": "GPL-3.0-or-later",
-  "collective": {
-    "type": "opencollective",
-    "url": "https://opencollective.com/anticensority"
-  }
+  "license": "GPL-3.0-or-later"
 }

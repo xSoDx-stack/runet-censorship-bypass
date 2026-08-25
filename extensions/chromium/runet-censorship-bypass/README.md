@@ -1,33 +1,28 @@
-# Install
+# АнтиЧебурнет — Руководство по сборке (Chromium MV3)
 
-Tested on:
+### Требования к окружению:
+* **Node.js**: `v20.x` или `v22.x`+ (LTS)
+* **NPM**: `v9.x` / `v10.x`+
 
-NodeJS: v16.1.0.
-NPM: 7.11.2.
-OS: Linux Mint 20 Xfce Edition.
+---
 
-```
+### Установка зависимостей и сборка:
+
+```bash
+# 1. Установка зависимостей сборщика
 npm install
-cd src/extension-common/pages/options/
-npm install
-cd -
 
-# For debugging:
-npm start
-# Use your build/extension-beta
-
-# For production:
-npm start
-# Use your build/extension-full or build/extension-mini
+# 2. Сборка расширения
+npm run release
 ```
 
-# For Reviewers
+Готовая к установке сборка расширения создается в директории:
+📁 **`build/extension-full`**
 
-See ./src/extension-common/FOR_REVIEWERS.md.
+---
 
-# Release Instructions
-
-1. `npm run release`
-2. `vim src/templates-data.js` and bump version.
-3. Commit bumped version.
-4. Merge development to production (usually after deployment and testing and many patches).
+### Установка в браузер (Chrome / Edge / Brave / Yandex / Opera):
+1. Откройте страницу расширений `chrome://extensions/`
+2. Включите переключатель **«Режим разработчика»** (Developer mode) в правом верхнем углу
+3. Нажмите **«Загрузить распакованное расширение»** (Load unpacked)
+4. Выберите папку `build/extension-full`
