@@ -20,21 +20,23 @@ export function parseDomainsInput(input) {
     if (!line) continue;
     let d = String(line).trim().toLowerCase();
     
-    // Remove comments
-    d = d.replace(/#.*$/, '').replace(/\/\/.*$/, '').trim();
+    // 1. Remove comments (# or // preceded by whitespace/start of line)
+    d = d.replace(/#.*$/, '').replace(/(^|\s+)\/\/.*$/, '').trim();
     if (!d) continue;
 
-    // Strip URL parts if full URL is passed
-    d = d.replace(/^[a-z]+:\/\//i, '');
+    // 2. Strip URL parts if full URL is passed (e.g. https://domain.com/path)
+    d = d.replace(/^[a-z0-9+.-]+:\/\//i, '');
     d = d.split('/')[0];
+    d = d.split('?')[0];
+    d = d.split('#')[0];
     d = d.split(':')[0];
     d = d.trim();
 
-    // Strip leading wildcard or dots (*.domain.com -> domain.com)
+    // 3. Strip leading wildcard or dots (*.domain.com -> domain.com)
     d = d.replace(/^\*\.?/, '').replace(/^\.+/, '').trim();
     
-    // Validate domain format (at least something.something or valid hostname)
-    if (d && (d.includes('.') || d === 'localhost') && !/\s/.test(d)) {
+    // 4. Validate domain format (at least something.something or valid hostname)
+    if (d && (d.includes('.') || d === 'localhost') && !/\s/.test(d) && !d.startsWith('.') && !d.endsWith('.')) {
       domains.add(d);
     }
   }
