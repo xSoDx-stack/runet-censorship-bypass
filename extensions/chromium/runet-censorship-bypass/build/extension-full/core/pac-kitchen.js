@@ -6,7 +6,6 @@ import { updateProxyCredentialsFromRaw, setupAuthListener, initProxyAuth } from 
 
 const KITCHEN_STARTS_MARK = '\n\n//%#@@@@@@ PAC_KITCHEN_STARTS @@@@@@#%';
 const MODS_KEY = 'pac-kitchen-mods';
-const IF_INCONTINENCE_KEY = 'pac-kitchen-if-incontinence';
 
 export { setupAuthListener, initProxyAuth };
 

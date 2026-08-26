@@ -2,8 +2,7 @@
 
 import { appState } from './app-state.js';
 import { pacSync, PAC_PROVIDERS } from './pac-sync.js';
-import { pacKitchen, getDefaultConfigs, getExceptionStats, matchExceptionDomain } from './pac-kitchen.js';
-import { ipToHost } from './ip-to-host.js';
+import { pacKitchen, getDefaultConfigs, matchExceptionDomain } from './pac-kitchen.js';
 import { errorHandlers } from './error-handlers.js';
 import { storage } from './storage.js';
 import { httpLib } from './http-lib.js';

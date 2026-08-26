@@ -18,7 +18,7 @@ let appState = {
   defaultConfigs: {},
   notifications: {},
   lastErrors: [],
-  version: '2.2.13',
+  version: '2.2.14',
   activeTab: 'exceptions',
   currentSiteDomain: '',
   exceptionStats: { includedCount: 0, excludedCount: 0, whitelistCount: 0 },
@@ -33,7 +33,7 @@ let appState = {
 };
 
 function formatVersion(ver) {
-  if (!ver) return 'v2.2.13';
+  if (!ver) return 'v2.2.14';
   let clean = String(ver).replace(/^0\.0\./, '').replace(/^v+/i, '').trim();
   return `v${clean}`;
 }
@@ -289,87 +289,6 @@ function prefillQuickAddInput() {
       el.excQuickInput.placeholder = 'Домен (напр. rutracker.org)';
     }
   }
-}
-
-// Fetch active tab domain and update widget (strict web URLs only)
-async function detectCurrentSiteDomain() {
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab || !tab.url) {
-      hideCurrentSiteWidget();
-      return;
-    }
-
-    const domainInfo = extractValidWebDomain(tab.url);
-    if (!domainInfo) {
-      hideCurrentSiteWidget();
-      return;
-    }
-
-    appState.currentSiteDomain = domainInfo.rootDomain || domainInfo.fullHost;
-    renderCurrentSiteWidget();
-    prefillQuickAddInput();
-  } catch {
-    hideCurrentSiteWidget();
-  }
-}
-
-function hideCurrentSiteWidget() {
-  appState.currentSiteDomain = '';
-  if (el.currentSiteWidget) el.currentSiteWidget.style.display = 'none';
-  prefillQuickAddInput();
-}
-
-// Check if domain or its parent domain matches exceptions with instant O(1) lookups
-function findMatchingException(requestHost, exceptions = {}) {
-  if (!requestHost || !exceptions) return { matched: false };
-  const host = requestHost.toLowerCase().trim();
-
-  // 1. Direct exact match O(1)
-  if (Object.prototype.hasOwnProperty.call(exceptions, host)) {
-    return {
-      matched: true,
-      ruleKey: host,
-      isProxied: exceptions[host] === true,
-      isExact: true,
-    };
-  }
-
-  // 2. Exact wildcard match O(1)
-  const exactWild = `*.${host}`;
-  if (Object.prototype.hasOwnProperty.call(exceptions, exactWild)) {
-    return {
-      matched: true,
-      ruleKey: exactWild,
-      isProxied: exceptions[exactWild] === true,
-      isExact: true,
-    };
-  }
-
-  // 3. Parent domain suffix matches (e.g. sub.forum.domain.com -> checks *.forum.domain.com, *.domain.com, *.com)
-  const parts = host.split('.');
-  for (let i = 1; i < parts.length; i++) {
-    const parent = parts.slice(i).join('.');
-    const parentWild = `*.${parent}`;
-    if (Object.prototype.hasOwnProperty.call(exceptions, parentWild)) {
-      return {
-        matched: true,
-        ruleKey: parentWild,
-        isProxied: exceptions[parentWild] === true,
-        isExact: false,
-      };
-    }
-    if (Object.prototype.hasOwnProperty.call(exceptions, parent)) {
-      return {
-        matched: true,
-        ruleKey: parent,
-        isProxied: exceptions[parent] === true,
-        isExact: false,
-      };
-    }
-  }
-
-  return { matched: false };
 }
 
 // Check if any custom proxies / Tor / WARP are configured
@@ -989,6 +908,7 @@ async function parseAndValidateDomainFile(file) {
 
   // 5. Binary data protection (check first 8KB for null bytes and non-printable control chars)
   const sample = rawText.slice(0, 8192);
+  // eslint-disable-next-line no-control-regex
   if (/[\x00-\x08\x0B\x0C\x0E-\x1F]/.test(sample)) {
     throw new Error('Файл содержит нечитаемые бинарные данные. Поддерживаются только текстовые файлы (.txt) в кодировке UTF-8.');
   }
@@ -1434,7 +1354,7 @@ async function loadState(currentDomain = '') {
     appState.defaultConfigs = res.data.defaultConfigs || appState.defaultConfigs;
     appState.notifications = res.data.notifications || appState.notifications;
     appState.lastErrors = res.data.lastErrors || appState.lastErrors;
-    appState.version = formatVersion(res.data.version || '2.2.13');
+    appState.version = formatVersion(res.data.version || '2.2.14');
     appState.exceptionStats = res.data.exceptionStats || appState.exceptionStats;
     if (res.data.currentSiteMatch) {
       appState.currentSiteMatch = res.data.currentSiteMatch;

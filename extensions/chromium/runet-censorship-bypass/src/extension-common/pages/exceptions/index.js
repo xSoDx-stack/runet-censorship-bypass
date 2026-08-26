@@ -260,6 +260,7 @@ async function parseAndValidateDomainFile(file) {
 
   // 5. Binary data protection (check first 8KB for null bytes and non-printable control chars)
   const sample = rawText.slice(0, 8192);
+  // eslint-disable-next-line no-control-regex
   if (/[\x00-\x08\x0B\x0C\x0E-\x1F]/.test(sample)) {
     throw new Error('Файл содержит нечитаемые бинарные данные. Поддерживаются только текстовые файлы (.txt) в кодировке UTF-8.');
   }

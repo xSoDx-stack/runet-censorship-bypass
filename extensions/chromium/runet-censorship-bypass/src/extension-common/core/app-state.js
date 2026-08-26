@@ -1,6 +1,5 @@
 'use strict';
 
-import { storage } from './storage.js';
 import { pacSync } from './pac-sync.js';
 import { pacKitchen } from './pac-kitchen.js';
 import { ipToHost } from './ip-to-host.js';

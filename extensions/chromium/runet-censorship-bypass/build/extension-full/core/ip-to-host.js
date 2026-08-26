@@ -1,14 +1,35 @@
+'use strict';
+
 import { storage } from './storage.js';
 
 const IP_STORAGE_KEY = 'ip-to-host';
 
+const DEFAULT_PROXY_IPS = {
+  // Local Tor / Xray / SOCKS5 / Shadowsocks / Sing-box proxies
+  '127.0.0.1': 'localhost',
+  '0.0.0.0': 'localhost',
+  '::1': 'localhost',
+
+  // Known Antizapret proxy server IPs
+  '195.201.201.32': 'proxy.antizapret.prostovpn.org:8443',
+  '51.158.176.144': 'proxy.antizapret.prostovpn.org:8443',
+  '194.58.109.112': 'proxy.antizapret.prostovpn.org:8443',
+  '140.238.220.198': 'proxy.antizapret.prostovpn.org:8443',
+  '193.124.18.238': 'proxy.antizapret.prostovpn.org:8443',
+  '188.130.137.66': 'proxy.antizapret.prostovpn.org:8443',
+  '5.188.78.115': 'proxy.antizapret.prostovpn.org:8443',
+  '185.112.102.133': 'proxy.antizapret.prostovpn.org:8443',
+  '193.107.218.175': 'proxy.antizapret.prostovpn.org:8443',
+  '176.119.157.170': 'proxy.antizapret.prostovpn.org:8443',
+  '194.135.83.186': 'proxy.antizapret.prostovpn.org:8443',
+  '185.204.1.203': 'proxy.antizapret.prostovpn.org:8443',
+  '95.217.218.137': 'proxy.antizapret.prostovpn.org:8443',
+  '159.69.208.243': 'proxy.antizapret.prostovpn.org:8443',
+};
+
 class IpToHostManager {
   constructor() {
-    this.ipToHostMap = {
-      '127.0.0.1': 'localhost',
-      '0.0.0.0': 'localhost',
-      '::1': 'localhost',
-    };
+    this.ipToHostMap = Object.assign({}, DEFAULT_PROXY_IPS);
     this.initialized = false;
   }
 
@@ -25,6 +46,55 @@ class IpToHostManager {
     return this.ipToHostMap[ip] || null;
   }
 
+  isProxyIp(ip) {
+    if (!ip) return false;
+    return Boolean(this.ipToHostMap[ip]);
+  }
+
+  addHost(host, ips = []) {
+    if (!host) return;
+    const cleanHost = String(host).trim();
+    if (!cleanHost) return;
+
+    // Check if host itself is an IP address
+    const ipv4Match = cleanHost.match(/^(\d{1,3}\.){3}\d{1,3}/);
+    if (ipv4Match) {
+      const ip = ipv4Match[0];
+      this.ipToHostMap[ip] = cleanHost;
+    }
+
+    if (Array.isArray(ips)) {
+      for (const ip of ips) {
+        if (ip && typeof ip === 'string') {
+          this.ipToHostMap[ip.trim()] = cleanHost;
+        }
+      }
+    }
+  }
+
+  updateFromProxyString(proxyString) {
+    if (!proxyString) return;
+    const parts = String(proxyString).split(/;\s*/);
+    for (const part of parts) {
+      const cleaned = part.replace(/^(HTTPS|HTTP|PROXY|SOCKS5?)\s+/i, '').trim();
+      if (!cleaned || cleaned === 'DIRECT') continue;
+      const hostOnly = cleaned.split('@').pop() || '';
+      if (hostOnly) {
+        this.addHost(hostOnly);
+      }
+    }
+  }
+
+  updateFromPac(pacData) {
+    if (!pacData || typeof pacData !== 'string') return;
+    const matches = pacData.matchAll(/(?:HTTPS|PROXY|SOCKS5?)\s+([a-zA-Z0-9.\-_:]+)/gi);
+    for (const match of matches) {
+      if (match[1] && match[1] !== 'DIRECT') {
+        this.addHost(match[1]);
+      }
+    }
+  }
+
   async persistData() {
     await storage.set(IP_STORAGE_KEY, this.ipToHostMap);
   }
@@ -34,10 +104,6 @@ class IpToHostManager {
       return ['127.0.0.1', '0.0.0.0', '::1'];
     }
     return [];
-  }
-
-  async updateHosts() {
-    // Completely offline: zero external DNS/DoH requests
   }
 }
 

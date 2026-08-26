@@ -11,10 +11,17 @@ import { logger } from './logger.js';
 const STORAGE_KEY = 'antiCensorRu';
 const ALARM_NAME = 'periodic-pac-update';
 
+const getI18nMsg = (key, fallback) => {
+  if (typeof chrome !== 'undefined' && chrome.i18n && typeof chrome.i18n.getMessage === 'function') {
+    return chrome.i18n.getMessage(key) || fallback;
+  }
+  return fallback;
+};
+
 export const PAC_PROVIDERS = {
   Антизапрет: {
     distinctKey: 'Antizapret',
-    label: chrome.i18n.getMessage('Antizapret') || 'Антизапрет',
+    label: getI18nMsg('Antizapret', 'Антизапрет'),
     desc: 'Основной PAC-скрипт от авторов проекта «Антизапрет». Блокировка определяется по реестровым доменам и IP-адресам.',
     order: 0,
     pacUrls: [
@@ -26,7 +33,7 @@ export const PAC_PROVIDERS = {
   },
   Антицензорити: {
     distinctKey: 'Anticensority',
-    label: chrome.i18n.getMessage('Anticensority') || 'Антицензорити',
+    label: getI18nMsg('Anticensority', 'Антицензорити'),
     desc: 'Альтернативный PAC-скрипт от авторов расширения с расширенной базой и защитой от провайдерских блокировок по IP.',
     order: 1,
     pacUrls: [
@@ -36,7 +43,7 @@ export const PAC_PROVIDERS = {
   },
   onlyOwnSites: {
     distinctKey: 'onlyOwnSites',
-    label: chrome.i18n.getMessage('Only_own_sites_and_only_own_proxies') || 'Только свои сайты (Tor / Свои прокси)',
+    label: getI18nMsg('Only_own_sites_and_only_own_proxies', 'Только свои сайты (Tor / Свои прокси)'),
     desc: 'Проксируются только вручную добавленные сайты через ваши прокси или локальный Tor.',
     order: 2,
     pacUrls: [
@@ -219,7 +226,43 @@ class PacSyncManager {
     this.revision++;
     this.rawPacData = candidateRawData;
     this.cookedPacData = candidateCooked;
+    try {
+      ipToHost.updateFromPac(candidateRawData);
+    } catch {
+      // Non-critical
+    }
     await this.updateControlState();
+  }
+
+  getProxyTitle() {
+    if (this.currentPacProviderKey === 'Антизапрет') {
+      return 'proxy.antizapret.prostovpn.org:8443';
+    }
+    if (this.currentPacProviderKey === 'Антицензорити') {
+      return 'Anticensority Proxy';
+    }
+    const provider = PAC_PROVIDERS[this.currentPacProviderKey];
+    return provider ? provider.label : (this.currentPacProviderKey || 'Proxy');
+  }
+
+  isDomainInPac(hostname) {
+    if (!hostname || !this.rawPacData) return false;
+    const h = String(hostname).toLowerCase().trim();
+    if (!h) return false;
+
+    if (this.rawPacData.includes(`"${h}"`) || this.rawPacData.includes(`'${h}'`)) {
+      return true;
+    }
+
+    const parts = h.split('.');
+    for (let i = 1; i < parts.length - 1; i++) {
+      const parent = parts.slice(i).join('.');
+      if (this.rawPacData.includes(`"${parent}"`) || this.rawPacData.includes(`'${parent}'`)) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   async syncWithPacProvider({ key = this.currentPacProviderKey, ifUnattended = false } = {}) {

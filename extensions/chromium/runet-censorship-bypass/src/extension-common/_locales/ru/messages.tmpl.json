@@ -1,9 +1,9 @@
 {
   "extName": {
-    "message": "Обход блокировок Рунета${nameSuffixRu}"
+    "message": "АнтиЧебурнет${nameSuffixRu}"
   },
   "extDesc": {
-    "message": "Обход интернет-цензуры в России: https://git.io/ac-wiki"
+    "message": "Свободный доступ к мировому интернету без ограничений и слежки"
   },
   "proxy": {
     "message": "прокси"
