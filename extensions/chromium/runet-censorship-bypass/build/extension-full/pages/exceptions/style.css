@@ -203,6 +203,17 @@ h1 {
   background: var(--bg-surface-hover);
 }
 
+.btn-danger {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.btn-danger:hover {
+  background: var(--danger);
+  color: #ffffff;
+}
+
 /* Domain List */
 .domain-list-container {
   display: grid;

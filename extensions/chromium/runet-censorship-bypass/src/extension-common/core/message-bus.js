@@ -127,6 +127,34 @@ export function setupMessageBus() {
           return { success: true, data: { count: domains.length, exceptionStats } };
         }
 
+        case 'CLEAR_EXCEPTIONS_CATEGORY': {
+          const target = message.target || 'included';
+          const pacMods = await pacKitchen.getPacMods();
+          const exceptions = Object.assign({}, pacMods.exceptions || {});
+          let whitelist = [...(pacMods.whitelist || [])];
+
+          if (target === 'included') {
+            for (const k in exceptions) {
+              if (exceptions[k] === true) delete exceptions[k];
+            }
+          } else if (target === 'excluded') {
+            for (const k in exceptions) {
+              if (exceptions[k] === false) delete exceptions[k];
+            }
+          } else if (target === 'whitelist') {
+            whitelist = [];
+          } else if (target === 'all') {
+            for (const k in exceptions) delete exceptions[k];
+            whitelist = [];
+          }
+
+          const updatedMods = Object.assign({}, pacMods, { exceptions, whitelist });
+          await pacKitchen.savePacMods(updatedMods);
+          await pacSync.reapplyCurrentPac();
+          const exceptionStats = pacKitchen.getCachedStats();
+          return { success: true, data: { exceptionStats } };
+        }
+
         case 'SYNC_PAC': {
           await pacSync.syncWithPacProvider({ key: message.key, ifUnattended: false });
           return { success: true, data: pacSync.getState() };

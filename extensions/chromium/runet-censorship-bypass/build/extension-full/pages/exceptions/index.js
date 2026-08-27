@@ -26,6 +26,7 @@ const el = {
   newDomainInput: document.getElementById('newDomainInput'),
   addDomainBtn: document.getElementById('addDomainBtn'),
   searchDomainInput: document.getElementById('searchDomainInput'),
+  clearListBtn: document.getElementById('clearListBtn'),
   domainListContainer: document.getElementById('domainListContainer'),
   rawTextEditor: document.getElementById('rawTextEditor'),
   saveRawBtn: document.getElementById('saveRawBtn'),
@@ -190,9 +191,59 @@ function removeDomain(domain) {
   saveAllData();
 }
 
-/**
- * Safely parse and validate domains from an uploaded File object.
- */
+async function handleClearList() {
+  if (state.activeSubTab === 'included') {
+    let count = 0;
+    for (const k in state.exceptions) {
+      if (state.exceptions[k] === true) count++;
+    }
+    if (count === 0) {
+      showToast('Список проксируемых доменов пуст');
+      return;
+    }
+    if (!confirm(`Удалить все проксируемые домены (${count} шт.)?`)) {
+      return;
+    }
+    for (const k in state.exceptions) {
+      if (state.exceptions[k] === true) {
+        delete state.exceptions[k];
+      }
+    }
+    await saveAllData();
+    showToast('✓ Список проксируемых доменов очищен');
+  } else if (state.activeSubTab === 'excluded') {
+    let count = 0;
+    for (const k in state.exceptions) {
+      if (state.exceptions[k] === false) count++;
+    }
+    if (count === 0) {
+      showToast('Список исключений пуст');
+      return;
+    }
+    if (!confirm(`Удалить все исключения (${count} шт.)?`)) {
+      return;
+    }
+    for (const k in state.exceptions) {
+      if (state.exceptions[k] === false) {
+        delete state.exceptions[k];
+      }
+    }
+    await saveAllData();
+    showToast('✓ Список исключений очищен');
+  } else if (state.activeSubTab === 'whitelist') {
+    if (!state.whitelist || state.whitelist.length === 0) {
+      showToast('Белый список пуст');
+      return;
+    }
+    if (!confirm(`Очистить весь белый список (${state.whitelist.length} шт.)?`)) {
+      return;
+    }
+    state.whitelist = [];
+    await saveAllData();
+    showToast('✓ Белый список очищен');
+  }
+}
+
 /**
  * Safely parse and validate domains from an uploaded File object.
  */
@@ -465,6 +516,10 @@ function setupEvents() {
 
   if (el.searchDomainInput) {
     el.searchDomainInput.addEventListener('input', renderDomainCards);
+  }
+
+  if (el.clearListBtn) {
+    el.clearListBtn.addEventListener('click', handleClearList);
   }
 
   // Scroll listener for virtual / infinite chunk loading

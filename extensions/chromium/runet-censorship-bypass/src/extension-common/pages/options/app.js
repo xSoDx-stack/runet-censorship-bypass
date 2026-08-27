@@ -18,7 +18,7 @@ let appState = {
   defaultConfigs: {},
   notifications: {},
   lastErrors: [],
-  version: '2.2.14',
+  version: '2.2.15',
   activeTab: 'exceptions',
   currentSiteDomain: '',
   exceptionStats: { includedCount: 0, excludedCount: 0, whitelistCount: 0 },
@@ -33,7 +33,7 @@ let appState = {
 };
 
 function formatVersion(ver) {
-  if (!ver) return 'v2.2.14';
+  if (!ver) return 'v2.2.15';
   let clean = String(ver).replace(/^0\.0\./, '').replace(/^v+/i, '').trim();
   return `v${clean}`;
 }
@@ -68,6 +68,7 @@ function initElements() {
   el.importTxtFileInput = document.getElementById('importTxtFileInput');
   el.importTxtBtn = document.getElementById('importTxtBtn');
   el.exportTxtBtn = document.getElementById('exportTxtBtn');
+  el.clearProxiedDomainsBtn = document.getElementById('clearProxiedDomainsBtn');
   el.importModal = document.getElementById('importModal');
   el.closeImportModalBtn = document.getElementById('closeImportModalBtn');
   el.cancelImportBtn = document.getElementById('cancelImportBtn');
@@ -78,8 +79,6 @@ function initElements() {
   el.statExcludedCount = document.getElementById('statExcludedCount');
   el.statWhitelistCount = document.getElementById('statWhitelistCount');
   el.openExceptionsPageBtn = document.getElementById('openExceptionsPageBtn');
-  el.openPacGeneratorBtn = document.getElementById('openPacGeneratorBtn');
-  el.openPacGeneratorToolsBtn = document.getElementById('openPacGeneratorToolsBtn');
   // Own Proxies Form & Controls
   el.proxyFormView = document.getElementById('proxyFormView');
   el.proxyRawView = document.getElementById('proxyRawView');
@@ -1354,7 +1353,7 @@ async function loadState(currentDomain = '') {
     appState.defaultConfigs = res.data.defaultConfigs || appState.defaultConfigs;
     appState.notifications = res.data.notifications || appState.notifications;
     appState.lastErrors = res.data.lastErrors || appState.lastErrors;
-    appState.version = formatVersion(res.data.version || '2.2.14');
+    appState.version = formatVersion(res.data.version || '2.2.15');
     appState.exceptionStats = res.data.exceptionStats || appState.exceptionStats;
     if (res.data.currentSiteMatch) {
       appState.currentSiteMatch = res.data.currentSiteMatch;
@@ -1413,6 +1412,41 @@ function setupEvents() {
     el.exportTxtBtn.addEventListener('click', handleOptionsFileExport);
   }
 
+  // Sites Tab: Clear Proxied Domains
+  if (el.clearProxiedDomainsBtn) {
+    el.clearProxiedDomainsBtn.addEventListener('click', async () => {
+      const count = appState.exceptionStats?.includedCount || 0;
+      if (count === 0) {
+        showToast('Список проксируемых доменов пуст');
+        return;
+      }
+      if (!confirm(`Удалить все проксируемые домены (${count} шт.)?`)) {
+        return;
+      }
+      const res = await sendMessage({ action: 'CLEAR_EXCEPTIONS_CATEGORY', target: 'included' });
+      if (res && res.success) {
+        if (res.data?.exceptionStats) {
+          appState.exceptionStats = res.data.exceptionStats;
+        }
+        // Also refresh current site match status
+        if (appState.currentSiteDomain) {
+          const matchRes = await sendMessage({
+            action: 'GET_STATE',
+            currentDomain: appState.currentSiteDomain,
+            includeExceptions: false,
+          });
+          if (matchRes?.success && matchRes.data) {
+            appState.currentSiteMatch = matchRes.data.currentSiteMatch || { matched: false };
+          }
+        }
+        render();
+        showToast('✓ Список проксируемых доменов очищен');
+      } else {
+        showToast(`Ошибка очистки: ${res.error || 'Сбой'}`);
+      }
+    });
+  }
+
   // Domain Import Modal Actions
   if (el.confirmImportBtn) {
     el.confirmImportBtn.addEventListener('click', handleConfirmImport);
@@ -1436,17 +1470,6 @@ function setupEvents() {
     el.openExceptionsPageBtn.addEventListener('click', () => {
       chrome.tabs.create({ url: chrome.runtime.getURL('pages/exceptions/index.html') });
     });
-  }
-
-  // Open Local PAC Generator in New Tab
-  const openPacGenerator = () => {
-    chrome.tabs.create({ url: chrome.runtime.getURL('pages/generator/index.html') });
-  };
-  if (el.openPacGeneratorBtn) {
-    el.openPacGeneratorBtn.addEventListener('click', openPacGenerator);
-  }
-  if (el.openPacGeneratorToolsBtn) {
-    el.openPacGeneratorToolsBtn.addEventListener('click', openPacGenerator);
   }
 
   // Provider Selection with Gating for onlyOwnSites

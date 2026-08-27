@@ -59,10 +59,20 @@ class BlockInformer {
 
   clearTab(tabId) {
     this.tabData.delete(tabId);
+    if (typeof chrome === 'undefined' || !chrome.action || tabId < 0) {
+      return;
+    }
+
     try {
-      if (chrome.action) {
-        chrome.action.setBadgeText({ tabId, text: '' });
-        chrome.action.setTitle({ tabId, title: this.defaultTitle });
+      if (chrome.action.setBadgeText) {
+        chrome.action.setBadgeText({ tabId, text: '' }, () => {
+          if (chrome.runtime && chrome.runtime.lastError) { /* ignore closed tab */ }
+        });
+      }
+      if (chrome.action.setTitle) {
+        chrome.action.setTitle({ tabId, title: this.defaultTitle }, () => {
+          if (chrome.runtime && chrome.runtime.lastError) { /* ignore closed tab */ }
+        });
       }
     } catch {
       // Tab may no longer exist
@@ -134,6 +144,8 @@ class BlockInformer {
   }
 
   recordProxiedHost(tabId, hostname, proxyHost, isMainFrame) {
+    if (tabId < 0) return;
+
     let data = this.tabData.get(tabId);
     if (!data) {
       data = {
@@ -158,19 +170,33 @@ class BlockInformer {
     const proxiesList = Array.from(data.proxies).map((p) => `  ${p}`).join('\n');
     const tooltip = `Разблокированы:\n${hostsList}\nПрокси:\n${proxiesList}`;
 
+    if (typeof chrome === 'undefined' || !chrome.action) {
+      return;
+    }
+
     try {
-      if (chrome.action) {
+      if (chrome.action.setBadgeBackgroundColor) {
         chrome.action.setBadgeBackgroundColor({
           tabId,
           color: '#db4b2f',
+        }, () => {
+          if (chrome.runtime && chrome.runtime.lastError) { /* ignore closed tab */ }
         });
+      }
+      if (chrome.action.setBadgeText) {
         chrome.action.setBadgeText({
           tabId,
           text: badgeText,
+        }, () => {
+          if (chrome.runtime && chrome.runtime.lastError) { /* ignore closed tab */ }
         });
+      }
+      if (chrome.action.setTitle) {
         chrome.action.setTitle({
           tabId,
           title: tooltip,
+        }, () => {
+          if (chrome.runtime && chrome.runtime.lastError) { /* ignore closed tab */ }
         });
       }
     } catch {
