@@ -69,6 +69,41 @@ export const utils = {
     };
   },
 
+  validatePacUrl(urlStr) {
+    if (!urlStr || typeof urlStr !== 'string' || !urlStr.trim()) {
+      return { valid: false, error: 'Введите адрес ссылки на PAC-скрипт' };
+    }
+    const cleanUrl = urlStr.trim();
+    let parsed;
+    try {
+      parsed = new URL(cleanUrl);
+    } catch {
+      return { valid: false, error: 'Некорректный формат URL адреса' };
+    }
+
+    const proto = (parsed.protocol || '').toLowerCase();
+    if (proto !== 'https:' && proto !== 'http:') {
+      return {
+        valid: false,
+        error: `Недопустимый протокол: ${proto}. Разрешены только https: и http:`,
+      };
+    }
+
+    if (parsed.username || parsed.password) {
+      return {
+        valid: false,
+        error: 'URL не должен содержать встроенный логин и пароль (user:password@)',
+      };
+    }
+
+    return {
+      valid: true,
+      sanitizedUrl: parsed.href,
+      isHttp: proto === 'http:',
+      hostname: parsed.hostname,
+    };
+  },
+
   errors: {
     handleResponseError(res) {
       return new Error(`Response error: HTTP ${res.status}`);

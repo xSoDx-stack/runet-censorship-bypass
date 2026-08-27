@@ -50,11 +50,19 @@ export const PAC_PROVIDERS = {
       'data:application/x-ns-proxy-autoconfig,' + encodeURIComponent('function FindProxyForURL(url, host){ return "DIRECT"; }'),
     ],
   },
+  customPacUrl: {
+    distinctKey: 'customPacUrl',
+    label: getI18nMsg('Custom_pac_url', 'Свой PAC (по ссылке)'),
+    desc: 'Готовый PAC-скрипт по собственной прямой ссылке (HTTPS или HTTP).',
+    order: 3,
+    pacUrls: [],
+  },
 };
 
 class PacSyncManager {
   constructor() {
     this.currentPacProviderKey = 'Антизапрет';
+    this.customPacUrl = '';
     this.lastPacUpdateStamp = 0;
     this.providerUpdateStamps = {};
     this.rawPacData = '';
@@ -75,6 +83,9 @@ class PacSyncManager {
     if (saved && typeof saved === 'object') {
       if (saved.currentPacProviderKey !== undefined) {
         this.currentPacProviderKey = saved.currentPacProviderKey;
+      }
+      if (saved.customPacUrl !== undefined) {
+        this.customPacUrl = saved.customPacUrl;
       }
       if (saved.lastPacUpdateStamp) {
         this.lastPacUpdateStamp = saved.lastPacUpdateStamp;
@@ -153,7 +164,8 @@ class PacSyncManager {
         hour: '2-digit',
         minute: '2-digit',
       });
-      title = `PAC обновлён: ${upDate} | ${this.currentPacProviderKey || 'Отключено'}`;
+      const provName = this.currentPacProviderKey === 'customPacUrl' ? 'Свой PAC' : (this.currentPacProviderKey || 'Отключено');
+      title = `PAC обновлён: ${upDate} | ${provName}`;
     }
     chrome.action.setTitle({ title }, () => {
       if (chrome.runtime.lastError) { /* ignore */ }
@@ -163,6 +175,7 @@ class PacSyncManager {
   async persistState() {
     await storage.set(STORAGE_KEY, {
       currentPacProviderKey: this.currentPacProviderKey,
+      customPacUrl: this.customPacUrl,
       lastPacUpdateStamp: this.lastPacUpdateStamp,
       providerUpdateStamps: this.providerUpdateStamps,
       rawPacData: this.rawPacData,
@@ -170,22 +183,40 @@ class PacSyncManager {
     this.updateTitle();
   }
 
-  async downloadPacFromProvider(provider) {
-    if (!provider || !provider.pacUrls || !provider.pacUrls.length) {
+  async downloadPacFromProvider(provider, customUrlCandidate = null) {
+    if (!provider) {
+      throw new Error('У провайдера нет доступных адресов PAC-скрипта');
+    }
+
+    let urls = provider.pacUrls || [];
+    if (provider.distinctKey === 'customPacUrl') {
+      const targetUrl = customUrlCandidate || this.customPacUrl;
+      const validation = utils.validatePacUrl(targetUrl);
+      if (!validation.valid) {
+        throw new Error(validation.error || 'Не указан корректный URL для своего PAC-скрипта');
+      }
+      urls = [validation.sanitizedUrl];
+    }
+
+    if (!urls.length) {
       throw new Error('У провайдера нет доступных адресов PAC-скрипта');
     }
 
     let lastErr = null;
-    for (const url of provider.pacUrls) {
+    for (const url of urls) {
       if (url.startsWith('data:')) {
         const decoded = decodeURIComponent(url.replace('data:application/x-ns-proxy-autoconfig,', ''));
         return decoded;
       }
       try {
         const text = await httpLib.get(url, { timeoutMs: 12000 });
-        if (text && text.includes('FindProxyForURL')) {
-          return text;
+        if (text && text.trim().length > 0) {
+          if (text.includes('FindProxyForURL')) {
+            return text;
+          }
+          throw new Error('Ответ не содержит функцию FindProxyForURL');
         }
+        throw new Error('Сервер вернул пустой PAC-скрипт');
       } catch (err) {
         lastErr = err;
         console.warn(`Failed to fetch PAC from ${url}:`, err);
@@ -194,7 +225,7 @@ class PacSyncManager {
 
     throw clarify(
       lastErr || new Error('Все адреса недоступны'),
-      `Не удалось загрузить PAC-скрипт с адресов: ${provider.pacUrls.join(', ')}`
+      `Не удалось загрузить PAC-скрипт с адресов: ${urls.join(', ')}`
     );
   }
 
@@ -241,6 +272,17 @@ class PacSyncManager {
     if (this.currentPacProviderKey === 'Антицензорити') {
       return 'Anticensority Proxy';
     }
+    if (this.currentPacProviderKey === 'customPacUrl') {
+      if (this.customPacUrl) {
+        try {
+          const parsed = new URL(this.customPacUrl);
+          return `Свой PAC (${parsed.hostname})`;
+        } catch {
+          return 'Свой PAC';
+        }
+      }
+      return 'Свой PAC';
+    }
     const provider = PAC_PROVIDERS[this.currentPacProviderKey];
     return provider ? provider.label : (this.currentPacProviderKey || 'Proxy');
   }
@@ -265,7 +307,7 @@ class PacSyncManager {
     return false;
   }
 
-  async syncWithPacProvider({ key = this.currentPacProviderKey, ifUnattended = false } = {}) {
+  async syncWithPacProvider({ key = this.currentPacProviderKey, customUrl = null, ifUnattended = false } = {}) {
     if (this.isSyncing) {
       console.log('PAC sync already in progress, skipping...');
       return;
@@ -286,7 +328,7 @@ class PacSyncManager {
 
     try {
       console.log(`[PAC Sync] Downloading PAC for provider "${key}"...`);
-      const candidateRaw = await this.downloadPacFromProvider(provider);
+      const candidateRaw = await this.downloadPacFromProvider(provider, customUrl);
 
       console.log('[PAC Sync] Cooking and applying PAC script...');
       const pacMods = await pacKitchen.getPacMods();
@@ -312,11 +354,14 @@ class PacSyncManager {
         );
       });
 
-      // Transaction Commit on success
+      // Transaction Commit on success ONLY
       this.revision++;
       this.rawPacData = candidateRaw;
       this.cookedPacData = candidateCooked;
       this.currentPacProviderKey = key;
+      if (key === 'customPacUrl' && customUrl) {
+        this.customPacUrl = customUrl.trim();
+      }
 
       const now = Date.now();
       this.lastPacUpdateStamp = now;
@@ -346,8 +391,8 @@ class PacSyncManager {
     }
   }
 
-  async installPac(key) {
-    await this.syncWithPacProvider({ key, ifUnattended: false });
+  async installPac(key, customUrl = null) {
+    await this.syncWithPacProvider({ key, customUrl, ifUnattended: false });
   }
 
   async clearPac() {
@@ -393,6 +438,7 @@ class PacSyncManager {
   getState() {
     return {
       currentPacProviderKey: this.currentPacProviderKey,
+      customPacUrl: this.customPacUrl,
       lastPacUpdateStamp: this.lastPacUpdateStamp,
       providerUpdateStamps: this.providerUpdateStamps,
       isSyncing: this.isSyncing,

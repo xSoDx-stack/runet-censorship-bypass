@@ -156,12 +156,21 @@ export function setupMessageBus() {
         }
 
         case 'SYNC_PAC': {
-          await pacSync.syncWithPacProvider({ key: message.key, ifUnattended: false });
+          await pacSync.syncWithPacProvider({
+            key: message.key || pacSync.currentPacProviderKey,
+            customUrl: message.customPacUrl,
+            ifUnattended: false,
+          });
           return { success: true, data: pacSync.getState() };
         }
 
         case 'INSTALL_PAC': {
-          await pacSync.installPac(message.key);
+          await pacSync.installPac(message.key, message.customPacUrl);
+          return { success: true, data: pacSync.getState() };
+        }
+
+        case 'SET_CUSTOM_PAC_URL': {
+          await pacSync.installPac('customPacUrl', message.url);
           return { success: true, data: pacSync.getState() };
         }
 

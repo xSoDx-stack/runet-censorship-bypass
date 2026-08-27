@@ -6,10 +6,15 @@ import { appState } from './app-state.js';
 
 /**
  * Proxy Authentication Manager for Chrome MV3
+ * Maintains strict separation between persistent credentials (stored in chrome.storage.local)
+ * and temporary credentials (in-memory only, used exclusively for health-check probes).
  */
 
-// In-memory credentials map: "host:port" -> { username, password }
-let proxyCredentialsMap = {};
+// Persistent credentials map (saved to storage, survives restarts): "host:port" / "host" -> { username, password }
+let persistentCredentialsMap = {};
+
+// Temporary credentials map (in-memory only, never saved to storage, cleaned up after health check): "host:port" / "host" -> { username, password }
+let temporaryCredentialsMap = {};
 
 function isLoopbackHost(host = '') {
   const h = (host || '').toLowerCase().trim();
@@ -26,7 +31,7 @@ function getHostAliases(hostname = '') {
 
 export async function initProxyAuth() {
   const saved = await storage.get('proxy-credentials-map', {});
-  proxyCredentialsMap = Object.assign({}, saved);
+  persistentCredentialsMap = Object.assign({}, saved);
 }
 
 export async function updateProxyCredentialsFromRaw(customProxyStringRaw = '') {
@@ -56,73 +61,104 @@ export async function updateProxyCredentialsFromRaw(customProxyStringRaw = '') {
     }
   }
 
-  proxyCredentialsMap = newMap;
+  persistentCredentialsMap = newMap;
   await storage.set('proxy-credentials-map', newMap);
-  return proxyCredentialsMap;
+  return persistentCredentialsMap;
 }
 
 export function registerTemporaryCredentials(hostname, port, username, password) {
   if (!hostname || !username) return;
-  const portStr = String(port || '443');
+  const h = String(hostname).toLowerCase().trim();
+  const portStr = String(port || '443').trim();
   const creds = {
     username: String(username),
     password: String(password || ''),
   };
 
-  const aliases = getHostAliases(hostname);
+  const aliases = getHostAliases(h);
   for (const alias of aliases) {
-    proxyCredentialsMap[`${alias}:${portStr}`] = creds;
-    proxyCredentialsMap[alias] = creds;
+    temporaryCredentialsMap[`${alias}:${portStr}`] = creds;
+    temporaryCredentialsMap[alias] = creds;
   }
 }
 
 export function unregisterTemporaryCredentials(hostname, port) {
-  if (!hostname) return;
-  const portStr = String(port || '443');
-  const aliases = getHostAliases(hostname);
+  if (!hostname) {
+    temporaryCredentialsMap = {};
+    return;
+  }
+  const h = String(hostname).toLowerCase().trim();
+  const portStr = port ? String(port).trim() : '';
+  const aliases = getHostAliases(h);
   for (const alias of aliases) {
-    delete proxyCredentialsMap[`${alias}:${portStr}`];
+    if (portStr) {
+      delete temporaryCredentialsMap[`${alias}:${portStr}`];
+    }
+    delete temporaryCredentialsMap[alias];
   }
 }
 
-function findCredentials(host, port) {
-  const hostStr = (host || '').toLowerCase().trim();
-  const portStr = String(port || '');
+function lookupInMap(map, hostStr, portStr) {
+  if (!map || !hostStr) return null;
 
   // 1. Direct host:port match
-  if (proxyCredentialsMap[`${hostStr}:${portStr}`]) {
-    return proxyCredentialsMap[`${hostStr}:${portStr}`];
+  if (portStr && map[`${hostStr}:${portStr}`]) {
+    return map[`${hostStr}:${portStr}`];
   }
 
-  // 2. Localhost aliases match
+  // 2. Loopback aliases with port
   if (isLoopbackHost(hostStr)) {
     const loopbacks = ['localhost', '127.0.0.1', '::1', '[::1]', '0.0.0.0'];
-    for (const lb of loopbacks) {
-      if (proxyCredentialsMap[`${lb}:${portStr}`]) {
-        return proxyCredentialsMap[`${lb}:${portStr}`];
+    if (portStr) {
+      for (const lb of loopbacks) {
+        if (map[`${lb}:${portStr}`]) {
+          return map[`${lb}:${portStr}`];
+        }
       }
-      if (proxyCredentialsMap[lb]) {
-        return proxyCredentialsMap[lb];
+    }
+    // Loopback aliases host-only
+    for (const lb of loopbacks) {
+      if (map[lb]) {
+        return map[lb];
       }
     }
   }
 
   // 3. Host only match
-  if (proxyCredentialsMap[hostStr]) {
-    return proxyCredentialsMap[hostStr];
-  }
-
-  // 4. Any key matching this port if loopback
-  for (const key of Object.keys(proxyCredentialsMap)) {
-    if (key.endsWith(`:${portStr}`)) {
-      const keyHost = key.slice(0, -(portStr.length + 1));
-      if (isLoopbackHost(keyHost) && isLoopbackHost(hostStr)) {
-        return proxyCredentialsMap[key];
-      }
-    }
+  if (map[hostStr]) {
+    return map[hostStr];
   }
 
   return null;
+}
+
+export function findCredentials(host, port) {
+  const hostStr = (host || '').toLowerCase().trim();
+  const portStr = port ? String(port).trim() : '';
+
+  if (!hostStr) return null;
+
+  // 1. Check temporary credentials first (active probe)
+  const tempCreds = lookupInMap(temporaryCredentialsMap, hostStr, portStr);
+  if (tempCreds && tempCreds.username) {
+    return tempCreds;
+  }
+
+  // 2. Fall back to persistent credentials
+  const permCreds = lookupInMap(persistentCredentialsMap, hostStr, portStr);
+  if (permCreds && permCreds.username) {
+    return permCreds;
+  }
+
+  return null;
+}
+
+export function getPersistentCredentialsMap() {
+  return Object.assign({}, persistentCredentialsMap);
+}
+
+export function getTemporaryCredentialsMap() {
+  return Object.assign({}, temporaryCredentialsMap);
 }
 
 export function setupAuthListener() {
@@ -178,7 +214,7 @@ export function setupAuthListener() {
         };
 
         // If credentials are in memory and already initialized, handle immediately
-        if (appState.isInitialized && Object.keys(proxyCredentialsMap).length > 0) {
+        if (appState.isInitialized && (Object.keys(persistentCredentialsMap).length > 0 || Object.keys(temporaryCredentialsMap).length > 0)) {
           return handleAuth();
         }
 

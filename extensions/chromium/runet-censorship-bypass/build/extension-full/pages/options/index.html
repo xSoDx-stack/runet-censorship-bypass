@@ -16,7 +16,7 @@
       <div>
         <div class="brand-title">
           АнтиЧебурнет
-          <span class="version-badge" id="extVersion">v2.2.15</span>
+          <span class="version-badge" id="extVersion">v2.2.16</span>
         </div>
       </div>
     </div>
@@ -92,6 +92,18 @@
           </div>
         </label>
 
+        <!-- Custom PAC URL -->
+        <label class="provider-card" data-provider="customPacUrl" id="customPacUrlCard">
+          <input type="radio" name="pacProviderRadio" class="provider-radio">
+          <div class="provider-info">
+            <div class="provider-header">
+              <span class="provider-name">Свой PAC (по ссылке)</span>
+            </div>
+            <div class="provider-desc">Готовый PAC-скрипт по собственной прямой ссылке (HTTPS или HTTP).</div>
+            <div class="provider-update-date" data-provider-date="customPacUrl">🕒 Обновлен: Загрузка...</div>
+          </div>
+        </label>
+
         <!-- Disable -->
         <label class="provider-card" data-provider="none">
           <input type="radio" name="pacProviderRadio" class="provider-radio">
@@ -102,6 +114,18 @@
             <div class="provider-desc">Временно освобождает настройки прокси в браузере.</div>
           </div>
         </label>
+      </div>
+
+      <!-- Custom PAC URL Input Box (visible when customPacUrl is selected) -->
+      <div class="custom-pac-url-box" id="customPacUrlBox" style="display: none;">
+        <div class="custom-pac-url-title">Адрес вашего PAC-скрипта</div>
+        <div class="custom-pac-url-row">
+          <input type="url" class="text-input" id="customPacUrlInput" placeholder="https://example.com/proxy.pac" spellcheck="false" autocomplete="off">
+          <button class="btn btn-primary btn-sm" id="saveCustomPacUrlBtn">
+            <span>Применить</span>
+          </button>
+        </div>
+        <div class="custom-pac-url-hint" id="customPacUrlHint">Прямая ссылка на готовый .pac файл (HTTPS или HTTP в локальной сети).</div>
       </div>
 
       <!-- Sync Bar -->

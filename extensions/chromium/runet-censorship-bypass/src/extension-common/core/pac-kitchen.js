@@ -313,20 +313,59 @@ export function cookPac(pacData, pacMods) {
 `;
   }
 
-  const directIfAllowed = pacMods.ifProxyOrDie ? '""/* Not allowed */' : '"DIRECT"';
+  const ifProxyOrDie = Boolean(pacMods.ifProxyOrDie);
+  const failClosedProxy = 'PROXY 127.0.0.1:0';
+
   generatedPac += `
-    const directIfAllowed = ${directIfAllowed};
-    ${pacMods.filteredCustomsString ? `const filteredCustomProxies = "${pacMods.filteredCustomsString}";` : ''}
-    const pacScriptProxies = originalFindProxyForURL(url, host)${
-      pacMods.ifProxyOrDie
-        ? '.replace(/DIRECT/g, "")'
-        : ' + "; " + directIfAllowed'
-    };
-    const proxiedDestination = ${
-      pacMods.filteredCustomsString
-        ? 'filteredCustomProxies + "; " + directIfAllowed'
-        : 'pacScriptProxies'
-    };
+    const failClosedProxy = "${failClosedProxy}";
+    const ifProxyOrDie = ${ifProxyOrDie};
+    const directIfAllowed = ifProxyOrDie ? "" : "DIRECT";
+    const filteredCustomProxies = ${JSON.stringify(pacMods.filteredCustomsString || '')};
+
+    function formatProxyChain(proxyList, isRouteMustProxy) {
+      const allDirectives = [];
+      (proxyList || []).forEach(function(item) {
+        if (!item) return;
+        item.split(/(?:\\s*;\\s*)+/g).forEach(function(p) {
+          const trimmed = (p || '').trim();
+          if (trimmed && !/^DIRECT$/i.test(trimmed)) {
+            allDirectives.push(trimmed);
+          }
+        });
+      });
+
+      if (allDirectives.length === 0) {
+        if (isRouteMustProxy) {
+          return ifProxyOrDie ? failClosedProxy : "DIRECT";
+        }
+        return "DIRECT";
+      }
+
+      if (ifProxyOrDie) {
+        return allDirectives.join("; ");
+      } else {
+        return allDirectives.join("; ") + "; DIRECT";
+      }
+    }
+
+    function getCustomProxiedDestination(url, host) {
+      const list = [];
+      if (filteredCustomProxies) {
+        list.push(filteredCustomProxies);
+      }
+      ${pacMods.ifUsePacScriptProxies && !pacMods.ifUseOwnProxiesOnlyForOwnSites ? `
+      const pacRes = originalFindProxyForURL(url, host);
+      if (pacRes && !/^DIRECT$/i.test(pacRes.trim())) {
+        ${pacMods.ifUseSecureProxiesOnly ? `
+        const secureOnly = pacRes.split(/(?:\\s*;\\s*)+/g).filter(function(pStr) { return /^HTTPS\\s/i.test(pStr.trim()); });
+        if (secureOnly.length) list.push(secureOnly.join("; "));
+        ` : `
+        list.push(pacRes);
+        `}
+      }
+      ` : ''}
+      return formatProxyChain(list, true);
+    }
 `;
 
   let finalExceptions = {};
@@ -367,7 +406,7 @@ export function cookPac(pacData, pacMods) {
     // 1. Direct match or parent domain suffix lookup in Hash Map O(1)
     if (excExact[host] !== undefined) {
       if (excExact[host] === 1) {
-        return proxiedDestination;
+        return getCustomProxiedDestination(url, host);
       } else {
         return "DIRECT";
       }
@@ -378,7 +417,7 @@ export function cookPac(pacData, pacMods) {
       const parentDomain = hostParts.slice(pIdx).join('.');
       if (excExact[parentDomain] !== undefined) {
         if (excExact[parentDomain] === 1) {
-          return proxiedDestination;
+          return getCustomProxiedDestination(url, host);
         } else {
           return "DIRECT";
         }
@@ -390,7 +429,7 @@ export function cookPac(pacData, pacMods) {
       const wRule = excWild[wIdx];
       if (dotHost.endsWith('.' + wRule.domain)) {
         if (wRule.isProxy) {
-          return proxiedDestination;
+          return getCustomProxiedDestination(url, host);
         } else {
           return "DIRECT";
         }
@@ -399,32 +438,29 @@ export function cookPac(pacData, pacMods) {
 `;
   }
 
-  if (!pacMods.ifUseSecureProxiesOnly && !pacMods.filteredCustomsString && pacMods.ifUsePacScriptProxies) {
-    generatedPac += `
-    return [pacScriptProxies, directIfAllowed].filter((p) => p).join("; ") || "DIRECT";
-  };
-`;
-  } else {
-    generatedPac += `
-    let pacProxyArray = pacScriptProxies.split(/(?:\\s*;\\s*)+/g).filter((p) => p);
-    const ifNoProxies = pacProxyArray${pacMods.ifProxyOrDie ? '.length === 0' : '.every((p) => /^DIRECT$/i.test(p))'};
-    if (ifNoProxies) {
+  generatedPac += `
+    const pacRes = originalFindProxyForURL(url, host);
+    if (!pacRes || /^DIRECT$/i.test(pacRes.trim())) {
       return "DIRECT";
     }
-    return ${
-      pacMods.filteredCustomsString && !pacMods.ifUseOwnProxiesOnlyForOwnSites
-        ? 'filteredCustomProxies + "; " + '
-        : ''
-    } ${
-      pacMods.ifUsePacScriptProxies
-        ? pacMods.ifUseSecureProxiesOnly
-          ? 'pacProxyArray.filter((pStr) => /^HTTPS\\s/i.test(pStr)).join("; ") + "; " + '
-          : 'pacScriptProxies + "; " + '
-        : '"" + '
-    } directIfAllowed;
+
+    const candidates = [];
+    ${pacMods.filteredCustomsString && !pacMods.ifUseOwnProxiesOnlyForOwnSites ? `
+    candidates.push(filteredCustomProxies);
+    ` : ''}
+
+    ${pacMods.ifUsePacScriptProxies ? `
+      ${pacMods.ifUseSecureProxiesOnly ? `
+      const securePac = pacRes.split(/(?:\\s*;\\s*)+/g).filter(function(pStr) { return /^HTTPS\\s/i.test(pStr.trim()); });
+      if (securePac.length) candidates.push(securePac.join("; "));
+      ` : `
+      candidates.push(pacRes);
+      `}
+    ` : ''}
+
+    return formatProxyChain(candidates, true);
   };
 `;
-  }
 
   if (pacMods.replaceDirectWith) {
     generatedPac += `
@@ -525,6 +561,10 @@ export const pacKitchen = {
     _cachedRawMods = null;
     _cachedParsedMods = null;
     _cachedStats = null;
+  },
+
+  getDefaults() {
+    return createPacModifiers({})[1];
   },
 
   cook: cookPac,

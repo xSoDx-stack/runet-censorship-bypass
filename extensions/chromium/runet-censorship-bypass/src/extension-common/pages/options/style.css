@@ -519,6 +519,41 @@ body {
   font-weight: 500;
 }
 
+/* Custom PAC URL Input Box */
+.custom-pac-url-box {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  animation: fadeIn 0.18s ease-in-out;
+}
+
+.custom-pac-url-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+
+.custom-pac-url-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.custom-pac-url-row .text-input {
+  flex: 1;
+  font-size: 11px;
+}
+
+.custom-pac-url-hint {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 5px;
+  line-height: 1.3;
+}
+
 /* Controls & Buttons */
 .btn {
   display: inline-flex;

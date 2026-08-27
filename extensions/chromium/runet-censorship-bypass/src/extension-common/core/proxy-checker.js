@@ -10,6 +10,34 @@ import { pacKitchen } from './pac-kitchen.js';
 let checkQueue = Promise.resolve();
 
 /**
+ * Constructs a layered Health Check PAC script that intercepts probe hostnames to route
+ * through candidate test proxy, while delegating ALL other browser traffic to the original FindProxyForURL.
+ *
+ * NOTE: Uses variable assignment binding (FindProxyForURL = function(...) { ... }) instead of
+ * a function declaration to prevent JavaScript hoisting from breaking the reference to the original function.
+ */
+export function generateHealthCheckPac(basePacScript, testProxyScheme) {
+  const base = (basePacScript && basePacScript.trim())
+    ? basePacScript
+    : 'function FindProxyForURL(url, host) { return "DIRECT"; }';
+
+  return `
+${base}
+
+var __originalFindProxyForURL = (typeof FindProxyForURL === 'function')
+  ? FindProxyForURL
+  : function(url, host) { return "DIRECT"; };
+
+FindProxyForURL = function(url, host) {
+  if (host === '1.1.1.1' || host === 'cloudflare.com' || host === 'cp.cloudflare.com' || host === 'connectivitycheck.gstatic.com' || host === 'dns.google') {
+    return "${testProxyScheme}";
+  }
+  return __originalFindProxyForURL(url, host);
+};
+`;
+}
+
+/**
  * Proxy Health Checker for Chrome MV3
  * Safely executes health probes without disrupting active browser traffic, delegating non-probe
  * requests to the active PAC script and ensuring zero secret/password leakage into diagnostic logs.
@@ -50,7 +78,7 @@ async function executeSingleProxyHealthCheck(proxyString) {
     hasAuth: Boolean(parsed.username),
   };
 
-  // 1. Register temporary credentials for test probe if present
+  // 1. Register temporary credentials for test probe if present (in-memory only)
   if (parsed.username) {
     registerTemporaryCredentials(parsed.hostname, parsed.port, parsed.username, parsed.password);
   }
@@ -87,24 +115,8 @@ async function executeSingleProxyHealthCheck(proxyString) {
     basePacScript = 'function FindProxyForURL(url, host) { return "DIRECT"; }';
   }
 
-  // 4. Construct layered Test PAC:
-  // - Top-level evaluation preserves global variables (e.g. domains map in Antizapret)
-  // - Intercepts probe domains (1.1.1.1, cloudflare.com, etc.) through candidate test proxy
-  // - Delegates ALL other traffic directly to active FindProxyForURL
-  const testPac = `
-${basePacScript}
-
-var __testProbeFindProxy = (typeof FindProxyForURL === 'function')
-  ? FindProxyForURL
-  : function(url, host) { return "DIRECT"; };
-
-function FindProxyForURL(url, host) {
-  if (host === '1.1.1.1' || host === 'cloudflare.com' || host === 'cp.cloudflare.com' || host === 'connectivitycheck.gstatic.com' || host === 'dns.google') {
-    return "${testProxyScheme}";
-  }
-  return __testProbeFindProxy(url, host);
-}
-`;
+  // 4. Construct layered Test PAC via generateHealthCheckPac
+  const testPac = generateHealthCheckPac(basePacScript, testProxyScheme);
 
   const testConfig = {
     mode: 'pac_script',
@@ -177,10 +189,8 @@ function FindProxyForURL(url, host) {
       }
     }
   } finally {
-    // 5. Cleanup temporary credentials
-    if (parsed.username) {
-      unregisterTemporaryCredentials(parsed.hostname, parsed.port);
-    }
+    // 5. Guaranteed cleanup of temporary credentials in memory
+    unregisterTemporaryCredentials(parsed.hostname, parsed.port);
 
     // 6. Restore active PAC safely: reapply current authoritative state to avoid stale snapshots
     try {

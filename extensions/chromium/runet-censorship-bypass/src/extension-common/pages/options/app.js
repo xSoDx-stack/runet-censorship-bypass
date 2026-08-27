@@ -18,7 +18,7 @@ let appState = {
   defaultConfigs: {},
   notifications: {},
   lastErrors: [],
-  version: '2.2.15',
+  version: '2.2.16',
   activeTab: 'exceptions',
   currentSiteDomain: '',
   exceptionStats: { includedCount: 0, excludedCount: 0, whitelistCount: 0 },
@@ -33,7 +33,7 @@ let appState = {
 };
 
 function formatVersion(ver) {
-  if (!ver) return 'v2.2.15';
+  if (!ver) return 'v2.2.16';
   let clean = String(ver).replace(/^0\.0\./, '').replace(/^v+/i, '').trim();
   return `v${clean}`;
 }
@@ -53,6 +53,11 @@ function initElements() {
   el.tabContents = document.querySelectorAll('.tab-content');
   el.providerCards = document.querySelectorAll('.provider-card');
   el.onlyOwnSitesCard = document.getElementById('onlyOwnSitesCard');
+  el.customPacUrlCard = document.getElementById('customPacUrlCard');
+  el.customPacUrlBox = document.getElementById('customPacUrlBox');
+  el.customPacUrlInput = document.getElementById('customPacUrlInput');
+  el.saveCustomPacUrlBtn = document.getElementById('saveCustomPacUrlBtn');
+  el.customPacUrlHint = document.getElementById('customPacUrlHint');
   el.homeProxyWarningBanner = document.getElementById('homeProxyWarningBanner');
   el.homeProxyWarningText = document.getElementById('homeProxyWarningText');
   // Current Site Widget
@@ -595,6 +600,14 @@ function render() {
 
   // Selected Provider Radio Card & Individual Provider Update Dates
   const provStamps = syncState.providerUpdateStamps || {};
+  const isCustomSelected = (syncState.currentPacProviderKey === 'customPacUrl');
+  if (el.customPacUrlBox) {
+    el.customPacUrlBox.style.display = isCustomSelected ? 'block' : 'none';
+  }
+  if (el.customPacUrlInput && syncState.customPacUrl && !el.customPacUrlInput.value) {
+    el.customPacUrlInput.value = syncState.customPacUrl;
+  }
+
   el.providerCards.forEach((card) => {
     const provKey = card.dataset.provider;
     const isSelected = provKey === (syncState.currentPacProviderKey || 'none');
@@ -606,6 +619,8 @@ function render() {
     if (dateEl) {
       if (provKey === 'onlyOwnSites') {
         dateEl.textContent = '🕒 Локальные правила';
+      } else if (provKey === 'customPacUrl' && !syncState.customPacUrl) {
+        dateEl.textContent = '🕒 Укажите ссылку';
       } else {
         const stamp = provStamps[provKey] || (provKey === syncState.currentPacProviderKey ? syncState.lastPacUpdateStamp : 0);
         if (stamp) {
@@ -1353,7 +1368,7 @@ async function loadState(currentDomain = '') {
     appState.defaultConfigs = res.data.defaultConfigs || appState.defaultConfigs;
     appState.notifications = res.data.notifications || appState.notifications;
     appState.lastErrors = res.data.lastErrors || appState.lastErrors;
-    appState.version = formatVersion(res.data.version || '2.2.15');
+    appState.version = formatVersion(res.data.version || '2.2.16');
     appState.exceptionStats = res.data.exceptionStats || appState.exceptionStats;
     if (res.data.currentSiteMatch) {
       appState.currentSiteMatch = res.data.currentSiteMatch;
@@ -1472,7 +1487,62 @@ function setupEvents() {
     });
   }
 
-  // Provider Selection with Gating for onlyOwnSites
+  // Custom PAC URL Apply Handler
+  async function handleApplyCustomPacUrl() {
+    const rawUrl = (el.customPacUrlInput?.value || '').trim();
+    if (!rawUrl) {
+      showToast('Введите адрес ссылки на PAC-скрипт');
+      el.customPacUrlInput?.focus();
+      return;
+    }
+
+    try {
+      const parsed = new URL(rawUrl);
+      if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+        showToast('Разрешены только протоколы HTTPS и HTTP');
+        return;
+      }
+      if (parsed.username || parsed.password) {
+        showToast('URL не должен содержать логин и пароль (user:password@)');
+        return;
+      }
+      if (parsed.protocol === 'http:') {
+        showToast('⚠️ Используется незащищённый HTTP (локальная сеть)');
+      }
+    } catch {
+      showToast('Некорректный формат URL');
+      return;
+    }
+
+    if (el.saveCustomPacUrlBtn) el.saveCustomPacUrlBtn.disabled = true;
+    showToast('Загрузка и применение своего PAC-скрипта...');
+    const res = await sendMessage({
+      action: 'INSTALL_PAC',
+      key: 'customPacUrl',
+      customPacUrl: rawUrl,
+    });
+    if (el.saveCustomPacUrlBtn) el.saveCustomPacUrlBtn.disabled = false;
+
+    if (res.success && res.data) {
+      appState.syncState = res.data;
+      render();
+      showToast('✓ Свой PAC-скрипт успешно загружен и применён!');
+    } else {
+      showToast(`Ошибка: ${res.error || 'Не удалось загрузить PAC'}`);
+      render();
+    }
+  }
+
+  if (el.saveCustomPacUrlBtn) {
+    el.saveCustomPacUrlBtn.addEventListener('click', handleApplyCustomPacUrl);
+  }
+  if (el.customPacUrlInput) {
+    el.customPacUrlInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') handleApplyCustomPacUrl();
+    });
+  }
+
+  // Provider Selection with Gating for onlyOwnSites and customPacUrl
   el.providerCards.forEach((card) => {
     card.addEventListener('click', async () => {
       const key = card.dataset.provider;
@@ -1485,6 +1555,27 @@ function setupEvents() {
           render();
           return;
         }
+      }
+
+      if (key === 'customPacUrl') {
+        if (el.customPacUrlBox) el.customPacUrlBox.style.display = 'block';
+        const urlToApply = (el.customPacUrlInput?.value || appState.syncState.customPacUrl || '').trim();
+        if (urlToApply) {
+          showToast('Установка своего PAC-скрипта...');
+          const res = await sendMessage({ action: 'INSTALL_PAC', key: 'customPacUrl', customPacUrl: urlToApply });
+          if (res.success) {
+            appState.syncState = res.data;
+            render();
+            showToast('Свой PAC-скрипт установлен!');
+          } else {
+            showToast(`Ошибка: ${res.error || 'Не удалось загрузить PAC'}`);
+            render();
+          }
+        } else {
+          el.customPacUrlInput?.focus();
+          showToast('Укажите прямую ссылку на PAC-скрипт и нажмите «Применить»');
+        }
+        return;
       }
 
       if (key === 'none') {
