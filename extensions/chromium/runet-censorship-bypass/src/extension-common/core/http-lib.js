@@ -25,8 +25,9 @@ export const httpLib = {
       }
       return res.headers.get('Last-Modified') || wasModifiedIn1970;
     } catch (err) {
-      console.warn('ifModifiedSince error:', err);
-      return wasModifiedIn1970;
+      // P1.7: Throw instead of silently returning "1970" (which falsely signals "was modified")
+      // Callers that want fire-and-forget should wrap in their own try/catch
+      throw clarify(err, 'Нет связи с сервером для проверки обновлений.');
     }
   },
 

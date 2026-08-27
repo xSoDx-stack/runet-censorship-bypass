@@ -4,6 +4,9 @@
  * Options & Popup Application Logic for Manifest V3
  */
 
+// P2.3: Single source of truth for the default version fallback
+const DEFAULT_VERSION = '2.2.17';
+
 // State
 let appState = {
   syncState: {
@@ -18,7 +21,7 @@ let appState = {
   defaultConfigs: {},
   notifications: {},
   lastErrors: [],
-  version: '2.2.16',
+  version: DEFAULT_VERSION,
   activeTab: 'exceptions',
   currentSiteDomain: '',
   exceptionStats: { includedCount: 0, excludedCount: 0, whitelistCount: 0 },
@@ -33,7 +36,7 @@ let appState = {
 };
 
 function formatVersion(ver) {
-  if (!ver) return 'v2.2.16';
+  if (!ver) return `v${DEFAULT_VERSION}`;
   let clean = String(ver).replace(/^0\.0\./, '').replace(/^v+/i, '').trim();
   return `v${clean}`;
 }
@@ -689,7 +692,7 @@ function renderCustomProxiesList() {
     return;
   }
 
-  list.forEach((item, index) => {
+  list.forEach((item) => {
     const health = appState.proxyHealthMap[item.raw] || {};
     let statusHtml = '';
 
@@ -698,27 +701,29 @@ function renderCustomProxiesList() {
     } else if (health.ok === true) {
       statusHtml = `<span class="proxy-status-tag online" title="Задержка: ${health.latency} мс">🟢 ${health.latency}мс</span>`;
     } else if (health.ok === false) {
-      statusHtml = `<span class="proxy-status-tag offline" title="${health.error || 'Недоступен'}">🔴 Недоступен</span>`;
+      statusHtml = `<span class="proxy-status-tag offline" title="${escapeHtml(health.error || 'Недоступен')}">🔴 Недоступен</span>`;
     } else {
       statusHtml = `<span class="proxy-status-tag checking">❓ Не проверен</span>`;
     }
 
     const itemEl = document.createElement('div');
     itemEl.className = 'proxy-item';
+    // P1.4: Use escapeHtml for all user-supplied data inserted via innerHTML
+    // P1.5: data-raw and data-index attributes removed — click handlers use closure (item) directly
     itemEl.innerHTML = `
       <div style="display: flex; align-items: center; overflow: hidden; flex: 1;">
-        <span class="proxy-badge">${item.type}</span>
-        <span class="proxy-addr" title="${item.address}">${item.address}</span>
-        ${item.hasAuth ? `<span class="proxy-auth-tag" title="Логин: ${item.user}">🔒</span>` : ''}
+        <span class="proxy-badge">${escapeHtml(item.type)}</span>
+        <span class="proxy-addr" title="${escapeHtml(item.address)}">${escapeHtml(item.address)}</span>
+        ${item.hasAuth ? `<span class="proxy-auth-tag" title="Логин: ${escapeHtml(item.user)}">🔒</span>` : ''}
         ${statusHtml}
       </div>
       <div class="proxy-actions">
-        <button class="icon-btn recheck-btn" title="Проверить доступность" data-raw="${item.raw}">🔄</button>
-        <button class="icon-btn delete delete-btn" title="Удалить" data-index="${index}">✕</button>
+        <button class="icon-btn recheck-btn" title="Проверить доступность">🔄</button>
+        <button class="icon-btn delete delete-btn" title="Удалить">✕</button>
       </div>
     `;
 
-    // Recheck button
+    // Recheck button — item captured via closure
     itemEl.querySelector('.recheck-btn').addEventListener('click', async () => {
       showToast(`Проверка ${item.address}...`);
       const res = await checkProxyAvailability(item.raw);
@@ -729,11 +734,12 @@ function renderCustomProxiesList() {
       }
     });
 
-    // Delete button
+    // Delete button — P1.5: filter by item.raw instead of splice(index) to avoid stale closure
     itemEl.querySelector('.delete-btn').addEventListener('click', async () => {
-      list.splice(index, 1);
+      const currentList = parseCustomProxies(appState.pacMods.customProxyStringRaw || '');
+      const newList = currentList.filter((p) => p.raw !== item.raw);
       delete appState.proxyHealthMap[item.raw];
-      const newRaw = list.map((p) => p.raw).join(';\n');
+      const newRaw = newList.map((p) => p.raw).join(';\n');
       const mods = Object.assign({}, appState.pacMods, { customProxyStringRaw: newRaw });
       const res = await sendMessage({ action: 'SAVE_MODS', mods });
       if (res.success) {

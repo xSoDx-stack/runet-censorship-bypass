@@ -463,10 +463,12 @@ export function cookPac(pacData, pacMods) {
 `;
 
   if (pacMods.replaceDirectWith) {
+    // P2.8: Escape $ signs to prevent regex replacement injection (e.g. $1, $& etc.)
+    const safeReplacement = pacMods.replaceDirectWith.replace(/\$/g, '$$$$');
     generatedPac += `
   const oldTmp = tmp;
   tmp = function(url, host) {
-    return oldTmp.call(this, url, host).replace(/(;|^)\\s*DIRECT\\s*(?=;|$)/g, "$1${pacMods.replaceDirectWith}");
+    return oldTmp.call(this, url, host).replace(/(;|^)\\s*DIRECT\\s*(?=;|$)/g, "$1${safeReplacement}");
   };
 `;
   }
@@ -504,10 +506,10 @@ export function calculateExceptionStats(exceptions = {}, whitelist = []) {
   return { includedCount, excludedCount, whitelistCount };
 }
 
+// NOTE: getExceptionStats intentionally does NOT cache — use pacKitchen.getCachedStats()
+// for the cached version. This function is a pure alias for calculateExceptionStats.
 export function getExceptionStats(exceptions = {}, whitelist = []) {
-  if (_cachedStats) return _cachedStats;
-  _cachedStats = calculateExceptionStats(exceptions, whitelist);
-  return _cachedStats;
+  return calculateExceptionStats(exceptions, whitelist);
 }
 
 export const pacKitchen = {
@@ -561,6 +563,11 @@ export const pacKitchen = {
     _cachedRawMods = null;
     _cachedParsedMods = null;
     _cachedStats = null;
+  },
+
+  // P0.3: Public accessor for block-informer and other consumers needing sync access to parsed mods
+  getCachedMods() {
+    return _cachedParsedMods;
   },
 
   getDefaults() {

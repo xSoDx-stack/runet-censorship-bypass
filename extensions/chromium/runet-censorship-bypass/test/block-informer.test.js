@@ -13,7 +13,9 @@ describe('BlockInformer & IpToHost', () => {
   });
 
   it('should dynamically register custom proxy IPs and hostnames', () => {
-    ipToHost.addHost('198.51.100.25:8080');
+    // P2.4: '198.51.100.25:8080' contains a port so it is NOT a bare IPv4 address —
+    // addHost with ips[] param is the correct way to map a specific IP to a proxy host
+    ipToHost.addHost('198.51.100.25:8080', ['198.51.100.25']);
     expect(ipToHost.get('198.51.100.25')).to.equal('198.51.100.25:8080');
 
     ipToHost.updateFromProxyString('HTTPS custom-proxy.net:443; SOCKS5 10.20.30.40:1080');

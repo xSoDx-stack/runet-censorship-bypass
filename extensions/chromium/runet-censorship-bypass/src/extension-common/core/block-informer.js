@@ -1,7 +1,7 @@
 'use strict';
 
 import { ipToHost } from './ip-to-host.js';
-import { pacKitchen } from './pac-kitchen.js';
+import { pacKitchen, matchExceptionDomain } from './pac-kitchen.js';
 import { pacSync } from './pac-sync.js';
 
 class BlockInformer {
@@ -16,6 +16,19 @@ class BlockInformer {
     this.initialized = true;
 
     if (typeof chrome === 'undefined') return;
+
+    // P2.5: Clean up any stale tabData entries from previous SW lifecycle
+    if (chrome.tabs && chrome.tabs.query) {
+      chrome.tabs.query({}, (tabs) => {
+        if (chrome.runtime.lastError) return;
+        const activeIds = new Set(tabs.map((t) => t.id));
+        for (const tabId of this.tabData.keys()) {
+          if (!activeIds.has(tabId)) {
+            this.tabData.delete(tabId);
+          }
+        }
+      });
+    }
 
     // 1. Reset on tab navigation / reload
     if (chrome.webNavigation && chrome.webNavigation.onBeforeNavigate) {
@@ -115,13 +128,14 @@ class BlockInformer {
     }
 
     // B. Check domain matching against PAC Kitchen user exceptions
+    // P0.3: Fixed — was using non-existent pacKitchen.cachedMods and pacKitchen.matchExceptionDomain
     if (!proxyHost) {
       try {
-        const mods = pacKitchen.cachedMods;
-        if (mods && mods.userAddedExceptions) {
-          const match = pacKitchen.matchExceptionDomain(hostname, mods.userAddedExceptions);
+        const mods = pacKitchen.getCachedMods();
+        if (mods && mods.exceptions && Object.keys(mods.exceptions).length > 0) {
+          const match = matchExceptionDomain(hostname, mods.exceptions);
           if (match && match.matched && match.isProxied) {
-            proxyHost = (mods.proxies || 'Proxy').split(';')[0].trim();
+            proxyHost = (mods.filteredCustomsString || 'Proxy').split(';')[0].trim();
           }
         }
       } catch {

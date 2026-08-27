@@ -32,7 +32,9 @@ export const utils = {
   parseProxyScheme(proxyAsStringRaw) {
     const proxyAsString = (proxyAsStringRaw || '').trim();
     const [type] = proxyAsString.split(/\s+/);
-    const typeRe = new RegExp(`^${type}\\s+`, 'g');
+    // P2.2: Escape regex special chars in type to prevent broken RegExp if type contains meta chars
+    const escapedType = (type || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const typeRe = new RegExp(`^${escapedType}\\s+`, 'g');
     const crededAddr = proxyAsString.replace(typeRe, '');
 
     const parts = crededAddr.split('@');
