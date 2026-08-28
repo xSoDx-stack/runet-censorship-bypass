@@ -1,7 +1,7 @@
 'use strict';
 
 import { ipToHost } from './ip-to-host.js';
-import { pacKitchen } from './pac-kitchen.js';
+import { pacKitchen, matchExceptionDomain } from './pac-kitchen.js';
 import { pacSync } from './pac-sync.js';
 
 class BlockInformer {
@@ -17,6 +17,19 @@ class BlockInformer {
 
     if (typeof chrome === 'undefined') return;
 
+    // P2.5: Clean up any stale tabData entries from previous SW lifecycle
+    if (chrome.tabs && chrome.tabs.query) {
+      chrome.tabs.query({}, (tabs) => {
+        if (chrome.runtime.lastError) return;
+        const activeIds = new Set(tabs.map((t) => t.id));
+        for (const tabId of this.tabData.keys()) {
+          if (!activeIds.has(tabId)) {
+            this.tabData.delete(tabId);
+          }
+        }
+      });
+    }
+
     // 1. Reset on tab navigation / reload
     if (chrome.webNavigation && chrome.webNavigation.onBeforeNavigate) {
       chrome.webNavigation.onBeforeNavigate.addListener((details) => {
@@ -26,13 +39,10 @@ class BlockInformer {
       });
     }
 
-    if (chrome.tabs && chrome.tabs.onUpdated) {
-      chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-        if (changeInfo.status === 'loading' && tabId >= 0) {
-          this.clearTab(tabId);
-        }
-      });
-    }
+    // P1-5 fix: clearTab only from onBeforeNavigate (more accurate than tabs.onUpdated).
+    // onBeforeNavigate fires specifically for real navigations of the main frame,
+    // whereas tabs.onUpdated status='loading' can fire without a real page change.
+    // Using both caused a double Chrome API call on every navigation.
 
     // 2. Cleanup on tab close
     if (chrome.tabs && chrome.tabs.onRemoved) {
@@ -115,13 +125,14 @@ class BlockInformer {
     }
 
     // B. Check domain matching against PAC Kitchen user exceptions
+    // P0.3: Fixed — was using non-existent pacKitchen.cachedMods and pacKitchen.matchExceptionDomain
     if (!proxyHost) {
       try {
-        const mods = pacKitchen.cachedMods;
-        if (mods && mods.userAddedExceptions) {
-          const match = pacKitchen.matchExceptionDomain(hostname, mods.userAddedExceptions);
+        const mods = pacKitchen.getCachedMods();
+        if (mods && mods.exceptions && Object.keys(mods.exceptions).length > 0) {
+          const match = matchExceptionDomain(hostname, mods.exceptions);
           if (match && match.matched && match.isProxied) {
-            proxyHost = (mods.proxies || 'Proxy').split(';')[0].trim();
+            proxyHost = (mods.filteredCustomsString || 'Proxy').split(';')[0].trim();
           }
         }
       } catch {

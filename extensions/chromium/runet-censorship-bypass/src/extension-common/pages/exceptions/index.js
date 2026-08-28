@@ -152,10 +152,22 @@ function appendNextDomainChunk() {
   nextBatch.forEach((domain) => {
     const card = document.createElement('div');
     card.className = 'domain-card';
-    card.innerHTML = `
-      <span class="domain-name" title="${domain}">${domain}</span>
-      <button class="delete-domain-btn" title="Удалить" data-domain="${domain}">✕</button>
-    `;
+
+    // P2-4 fix: use createElement + textContent instead of innerHTML to prevent XSS
+    // (raw-editor allows arbitrary text that could contain HTML if not escaped)
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'domain-name';
+    nameSpan.textContent = domain;
+    nameSpan.title = domain;
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'delete-domain-btn';
+    deleteBtn.title = 'Удалить';
+    deleteBtn.dataset.domain = domain;
+    deleteBtn.textContent = '✕';
+
+    card.appendChild(nameSpan);
+    card.appendChild(deleteBtn);
     fragment.appendChild(card);
   });
 
@@ -246,6 +258,9 @@ async function handleClearList() {
 
 /**
  * Safely parse and validate domains from an uploaded File object.
+ * P1-2 NOTE: This function is intentionally duplicated in pages/options/app.js because
+ * page scripts cannot use ES module imports. Both copies must be kept in sync.
+ * Canonical implementation reference: core/utils.js → parseAndValidateDomainFile
  */
 async function parseAndValidateDomainFile(file) {
   if (!file) {

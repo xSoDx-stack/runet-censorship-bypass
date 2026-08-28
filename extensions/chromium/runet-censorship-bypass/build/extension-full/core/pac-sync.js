@@ -111,7 +111,11 @@ class PacSyncManager {
   setupAlarms() {
     if (!chrome.alarms) return;
     chrome.alarms.get(ALARM_NAME, (existingAlarm) => {
-      if (chrome.runtime.lastError) { /* ignore */ }
+      if (chrome.runtime.lastError) {
+        // P1.8: Log alarm check errors rather than silently swallowing them
+        console.warn('[PacSync] Alarm check error:', chrome.runtime.lastError);
+        return;
+      }
       if (!existingAlarm) {
         chrome.alarms.create(ALARM_NAME, {
           periodInMinutes: 240, // every 4 hours
@@ -164,7 +168,11 @@ class PacSyncManager {
         hour: '2-digit',
         minute: '2-digit',
       });
-      const provName = this.currentPacProviderKey === 'customPacUrl' ? 'Свой PAC' : (this.currentPacProviderKey || 'Отключено');
+      // P2.10: use i18n for provider label instead of hardcoded Russian string
+      const customPacLabel = getI18nMsg('Custom_pac_url', 'Свой PAC');
+      const provName = this.currentPacProviderKey === 'customPacUrl'
+        ? customPacLabel
+        : (this.currentPacProviderKey || 'Отключено');
       title = `PAC обновлён: ${upDate} | ${provName}`;
     }
     chrome.action.setTitle({ title }, () => {
@@ -259,6 +267,8 @@ class PacSyncManager {
     this.cookedPacData = candidateCooked;
     try {
       ipToHost.updateFromPac(candidateRawData);
+      // P2-3 fix: persist updated ip→host map so it survives SW restart
+      ipToHost.persistData().catch(() => {});
     } catch {
       // Non-critical
     }
@@ -292,6 +302,11 @@ class PacSyncManager {
     const h = String(hostname).toLowerCase().trim();
     if (!h) return false;
 
+    // P0-3: NOTE — this is a heuristic text search in the PAC JS source.
+    // It can produce false positives if the domain string appears inside comments or
+    // unrelated JS expressions. Minimum 5-char check guards against TLD-level matches.
+    if (h.length < 5 || !h.includes('.')) return false;
+
     if (this.rawPacData.includes(`"${h}"`) || this.rawPacData.includes(`'${h}'`)) {
       return true;
     }
@@ -299,7 +314,9 @@ class PacSyncManager {
     const parts = h.split('.');
     for (let i = 1; i < parts.length - 1; i++) {
       const parent = parts.slice(i).join('.');
-      if (this.rawPacData.includes(`"${parent}"`) || this.rawPacData.includes(`'${parent}'`)) {
+      if (parent.length >= 5 && (
+        this.rawPacData.includes(`"${parent}"`) || this.rawPacData.includes(`'${parent}'`)
+      )) {
         return true;
       }
     }
@@ -330,34 +347,13 @@ class PacSyncManager {
       console.log(`[PAC Sync] Downloading PAC for provider "${key}"...`);
       const candidateRaw = await this.downloadPacFromProvider(provider, customUrl);
 
+      // P0.2: Delegate cook+set+atomic-commit to applyPacData (single source of truth)
+      // applyPacData handles: cook, chrome.proxy.settings.set, rawPacData, cookedPacData,
+      // ipToHost.updateFromPac, updateControlState, and revision++
       console.log('[PAC Sync] Cooking and applying PAC script...');
-      const pacMods = await pacKitchen.getPacMods();
-      const candidateCooked = pacKitchen.cook(candidateRaw, pacMods);
+      await this.applyPacData(candidateRaw);
 
-      await new Promise((resolve, reject) => {
-        const config = {
-          mode: 'pac_script',
-          pacScript: {
-            data: candidateCooked,
-            mandatory: false,
-          },
-        };
-
-        chrome.proxy.settings.set(
-          { value: config, scope: 'regular' },
-          () => {
-            if (chrome.runtime.lastError) {
-              return reject(new Error(chrome.runtime.lastError.message));
-            }
-            resolve();
-          }
-        );
-      });
-
-      // Transaction Commit on success ONLY
-      this.revision++;
-      this.rawPacData = candidateRaw;
-      this.cookedPacData = candidateCooked;
+      // Additional bookkeeping specific to a full provider sync (not in applyPacData)
       this.currentPacProviderKey = key;
       if (key === 'customPacUrl' && customUrl) {
         this.customPacUrl = customUrl.trim();
@@ -367,7 +363,7 @@ class PacSyncManager {
       this.lastPacUpdateStamp = now;
       this.providerUpdateStamps[key] = now;
       await this.persistState();
-      await this.updateControlState();
+      // Note: updateControlState already called by applyPacData
 
       console.log('[PAC Sync] Successfully updated PAC!');
       logger.info('pac', `PAC-скрипт "${key}" успешно обновлён`, `Размер PAC: ${(candidateRaw.length / 1024).toFixed(1)} КБ`, {

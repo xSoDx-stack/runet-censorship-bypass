@@ -16,6 +16,12 @@ let persistentCredentialsMap = {};
 // Temporary credentials map (in-memory only, never saved to storage, cleaned up after health check): "host:port" / "host" -> { username, password }
 let temporaryCredentialsMap = {};
 
+// P1-4 fix: requestTries moved to module scope so it is accessible to cleanup listeners
+// regardless of whether setupAuthListener ran its early return path.
+// P1-6 fix: explicit flag to distinguish "initialized with zero proxies" from "not yet initialized"
+let requestTries = {};
+let proxyAuthInitialized = false;
+
 function isLoopbackHost(host = '') {
   const h = (host || '').toLowerCase().trim();
   return h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '[::1]' || h === '0.0.0.0';
@@ -32,6 +38,10 @@ function getHostAliases(hostname = '') {
 export async function initProxyAuth() {
   const saved = await storage.get('proxy-credentials-map', {});
   persistentCredentialsMap = Object.assign({}, saved);
+  // P1-4 fix: reset try counter on every SW init to avoid stale state from previous lifecycle
+  requestTries = {};
+  // P1-6 fix: mark as truly initialized (distinct from "empty map")
+  proxyAuthInitialized = true;
 }
 
 export async function updateProxyCredentialsFromRaw(customProxyStringRaw = '') {
@@ -167,7 +177,8 @@ export function setupAuthListener() {
       return;
     }
 
-    const requestTries = {};
+    // P1-4: requestTries is now in module scope (see top of file)
+    // so cleanup listeners always reference the same object even after early return paths
 
     chrome.webRequest.onAuthRequired.addListener(
       (details, asyncCallback) => {
@@ -213,8 +224,10 @@ export function setupAuthListener() {
           return resp;
         };
 
-        // If credentials are in memory and already initialized, handle immediately
-        if (appState.isInitialized && (Object.keys(persistentCredentialsMap).length > 0 || Object.keys(temporaryCredentialsMap).length > 0)) {
+        // P1-6 fix: use proxyAuthInitialized flag instead of checking map emptiness.
+        // An empty map is valid (user has no proxies with passwords) and differs from
+        // "not yet initialized". This prevents wrongly deferring auth on a valid empty state.
+        if (proxyAuthInitialized) {
           return handleAuth();
         }
 

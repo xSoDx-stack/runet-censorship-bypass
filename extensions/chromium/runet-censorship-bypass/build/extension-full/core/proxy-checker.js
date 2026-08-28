@@ -84,16 +84,27 @@ async function executeSingleProxyHealthCheck(proxyString) {
   }
 
   // 2. Map protocol to PAC keyword
-  let pacKeyword = parsed.type.toUpperCase();
-  if (pacKeyword === 'HTTP') {
+  // P1.3: Use explicit isSocks flag instead of fragile includes(';') detection
+  const rawType = parsed.type.toUpperCase();
+  let pacKeyword;
+  let isSocks = false;
+
+  if (rawType === 'HTTP') {
     pacKeyword = 'PROXY';
-  } else if (pacKeyword === 'SOCKS4') {
+  } else if (rawType === 'SOCKS4') {
     pacKeyword = 'SOCKS';
-  } else if (pacKeyword === 'SOCKS5' || pacKeyword === 'SOCKS') {
-    pacKeyword = 'SOCKS5; SOCKS';
+  } else if (rawType === 'SOCKS5' || rawType === 'SOCKS') {
+    isSocks = true;
+  } else {
+    pacKeyword = rawType; // HTTPS or other known keyword
   }
 
-  const testProxyScheme = pacKeyword.includes(';')
+  // P1-3 fix: guard against unknown types yielding undefined pacKeyword
+  if (!isSocks && !pacKeyword) {
+    pacKeyword = 'PROXY';
+  }
+
+  const testProxyScheme = isSocks
     ? `SOCKS5 ${parsed.hostname}:${parsed.port}; SOCKS ${parsed.hostname}:${parsed.port}`
     : `${pacKeyword} ${parsed.hostname}:${parsed.port}`;
 

@@ -56,11 +56,12 @@ class IpToHostManager {
     const cleanHost = String(host).trim();
     if (!cleanHost) return;
 
-    // Check if host itself is an IP address
-    const ipv4Match = cleanHost.match(/^(\d{1,3}\.){3}\d{1,3}/);
+    // P2.4: Strip port from host string before IPv4 check so 'ip:port' forms are handled correctly
+    // The full host string (e.g. '10.20.30.40:1080') is stored as the value; we key by bare IP
+    const ipCandidate = cleanHost.split(':')[0];
+    const ipv4Match = ipCandidate.match(/^(\d{1,3}\.){3}\d{1,3}$/);
     if (ipv4Match) {
-      const ip = ipv4Match[0];
-      this.ipToHostMap[ip] = cleanHost;
+      this.ipToHostMap[ipCandidate] = cleanHost;
     }
 
     if (Array.isArray(ips)) {

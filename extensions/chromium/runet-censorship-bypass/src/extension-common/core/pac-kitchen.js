@@ -3,9 +3,15 @@
 import { storage } from './storage.js';
 import { utils } from './utils.js';
 import { updateProxyCredentialsFromRaw, setupAuthListener, initProxyAuth } from './proxy-auth.js';
+import { logger } from './logger.js';
 
 const KITCHEN_STARTS_MARK = '\n\n//%#@@@@@@ PAC_KITCHEN_STARTS @@@@@@#%';
 const MODS_KEY = 'pac-kitchen-mods';
+// Pre-built RegExp for stripping PAC kitchen block (constant avoids re-compilation per call)
+const KITCHEN_STRIP_RE = new RegExp(
+  KITCHEN_STARTS_MARK.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[\\s\\S]*$',
+  'g'
+);
 
 export { setupAuthListener, initProxyAuth };
 
@@ -174,10 +180,30 @@ export function getDefaults() {
 export function createPacModifiers(mods = {}) {
   mods = mods || {};
   const configs = getDefaultConfigs();
-  const ifNoMods = Object.keys(configs).every((dProp) => {
-    const ifDflt = !(dProp in mods && Boolean(configs[dProp].dflt) !== Boolean(mods[dProp]));
-    const ifMods = configs[dProp].ifDfltMods;
-    return ifDflt ? !ifMods : ifMods;
+  /**
+   * P2-6 fix: Replaced unreadable double-negation + ternary with explicit named logic.
+   *
+   * Original (obfuscated) logic was: return ifDflt ? !ifMods : ifMods
+   * Decoded meaning:
+   *   - isAtDefault=true,  ifDfltMods=false → return true  (no mod, not a forced-mod → OK)
+   *   - isAtDefault=true,  ifDfltMods=true  → return false (at default but this property always forces a mod)
+   *   - isAtDefault=false, ifDfltMods=false → return false (overridden from default → counts as mod)
+   *   - isAtDefault=false, ifDfltMods=true  → return true  (overridden, but ifDfltMods means "at default = mod"; overriding cancels that)
+   *
+   * ifNoMods = false means "PAC kitchen modifications are needed"
+   */
+  const ifNoMods = Object.keys(configs).every((propKey) => {
+    const config = configs[propKey];
+    const isOverridden = propKey in mods && Boolean(config.dflt) !== Boolean(mods[propKey]);
+    const isAtDefault = !isOverridden;
+
+    // When at default: this property causes a mod only if it has ifDfltMods=true
+    // When overridden: this property causes a mod only if ifDfltMods=false (normal override)
+    if (isAtDefault) {
+      return !config.ifDfltMods; // at default: no mod unless ifDfltMods forces one
+    } else {
+      return Boolean(config.ifDfltMods); // overridden: no mod if ifDfltMods (override undoes the default-mod)
+    }
   });
 
   const defaults = getDefaults();
@@ -265,7 +291,8 @@ export function createPacModifiers(mods = {}) {
 
 export function cookPac(pacData, pacMods) {
   if (!pacData) return '';
-  pacData = pacData.replace(new RegExp(KITCHEN_STARTS_MARK + '[\\s\\S]*$', 'g'), '').trim();
+  pacData = pacData.replace(KITCHEN_STRIP_RE, '').trim();
+  KITCHEN_STRIP_RE.lastIndex = 0; // reset global flag after use
 
   if (pacMods.ifNoMods) {
     return pacData;
@@ -463,12 +490,14 @@ export function cookPac(pacData, pacMods) {
 `;
 
   if (pacMods.replaceDirectWith) {
-    // P2.8: Escape $ signs to prevent regex replacement injection (e.g. $1, $& etc.)
-    const safeReplacement = pacMods.replaceDirectWith.replace(/\$/g, '$$$$');
+    // P2-2 fix: use JSON.stringify to safely embed replaceDirectWith as a JS string literal.
+    // This prevents both regex injection ($1, $& etc.) AND JS syntax breakage
+    // if the value contains quotes, backslashes or other special characters.
+    const safeReplacementLiteral = JSON.stringify(pacMods.replaceDirectWith);
     generatedPac += `
   const oldTmp = tmp;
   tmp = function(url, host) {
-    return oldTmp.call(this, url, host).replace(/(;|^)\\s*DIRECT\\s*(?=;|$)/g, "$1${safeReplacement}");
+    return oldTmp.call(this, url, host).replace(/(;|^)\\s*DIRECT\\s*(?=;|$)/g, "$1" + ${safeReplacementLiteral});
   };
 `;
   }
@@ -523,7 +552,11 @@ export const pacKitchen = {
     ]);
     _cachedRawMods = rawMods;
     await updateProxyCredentialsFromRaw(rawMods.customProxyStringRaw || '');
-    const [, mods] = createPacModifiers(rawMods);
+    // P0-1 fix: capture error from createPacModifiers and log it instead of silently ignoring
+    const [modsErr, mods] = createPacModifiers(rawMods);
+    if (modsErr) {
+      logger.warn('pac', 'Ошибка разбора настроек PAC', modsErr.message, { rawMods });
+    }
     _cachedParsedMods = mods || getDefaults();
     if (savedStats && typeof savedStats === 'object' && savedStats.includedCount !== undefined) {
       _cachedStats = savedStats;

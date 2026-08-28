@@ -267,6 +267,8 @@ class PacSyncManager {
     this.cookedPacData = candidateCooked;
     try {
       ipToHost.updateFromPac(candidateRawData);
+      // P2-3 fix: persist updated ip→host map so it survives SW restart
+      ipToHost.persistData().catch(() => {});
     } catch {
       // Non-critical
     }
@@ -300,6 +302,11 @@ class PacSyncManager {
     const h = String(hostname).toLowerCase().trim();
     if (!h) return false;
 
+    // P0-3: NOTE — this is a heuristic text search in the PAC JS source.
+    // It can produce false positives if the domain string appears inside comments or
+    // unrelated JS expressions. Minimum 5-char check guards against TLD-level matches.
+    if (h.length < 5 || !h.includes('.')) return false;
+
     if (this.rawPacData.includes(`"${h}"`) || this.rawPacData.includes(`'${h}'`)) {
       return true;
     }
@@ -307,7 +314,9 @@ class PacSyncManager {
     const parts = h.split('.');
     for (let i = 1; i < parts.length - 1; i++) {
       const parent = parts.slice(i).join('.');
-      if (this.rawPacData.includes(`"${parent}"`) || this.rawPacData.includes(`'${parent}'`)) {
+      if (parent.length >= 5 && (
+        this.rawPacData.includes(`"${parent}"`) || this.rawPacData.includes(`'${parent}'`)
+      )) {
         return true;
       }
     }

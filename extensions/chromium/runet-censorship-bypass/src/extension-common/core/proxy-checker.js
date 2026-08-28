@@ -96,7 +96,12 @@ async function executeSingleProxyHealthCheck(proxyString) {
   } else if (rawType === 'SOCKS5' || rawType === 'SOCKS') {
     isSocks = true;
   } else {
-    pacKeyword = rawType; // HTTPS or other
+    pacKeyword = rawType; // HTTPS or other known keyword
+  }
+
+  // P1-3 fix: guard against unknown types yielding undefined pacKeyword
+  if (!isSocks && !pacKeyword) {
+    pacKeyword = 'PROXY';
   }
 
   const testProxyScheme = isSocks

@@ -39,13 +39,10 @@ class BlockInformer {
       });
     }
 
-    if (chrome.tabs && chrome.tabs.onUpdated) {
-      chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-        if (changeInfo.status === 'loading' && tabId >= 0) {
-          this.clearTab(tabId);
-        }
-      });
-    }
+    // P1-5 fix: clearTab only from onBeforeNavigate (more accurate than tabs.onUpdated).
+    // onBeforeNavigate fires specifically for real navigations of the main frame,
+    // whereas tabs.onUpdated status='loading' can fire without a real page change.
+    // Using both caused a double Chrome API call on every navigation.
 
     // 2. Cleanup on tab close
     if (chrome.tabs && chrome.tabs.onRemoved) {

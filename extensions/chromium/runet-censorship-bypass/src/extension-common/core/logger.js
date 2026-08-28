@@ -102,7 +102,9 @@ class LoggerManager {
    */
   add({ level = 'error', category = 'system', title = '', message = '', details = null }) {
     const timestamp = Date.now();
-    const id = `${timestamp}-${Math.random().toString(36).slice(2, 7)}`;
+    // P2-9 fix: use crypto.randomUUID() instead of Math.random() to prevent ID collisions
+    // during burst-logging where timestamp alone is not unique enough
+    const id = `${timestamp}-${crypto.randomUUID()}`;
 
     // Sanitize title and message against secrets
     const sanitizedTitle = sanitizeLogString(String(title || 'Неизвестная ошибка'));

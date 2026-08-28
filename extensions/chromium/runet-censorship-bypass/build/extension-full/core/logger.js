@@ -3,7 +3,8 @@
 import { storage } from './storage.js';
 
 const STORAGE_LOGS_KEY = 'antiCensorLogs';
-const MAX_LOGS_LIMIT = 30;
+// P1.6: Match MAX_LOGS_LIMIT to getLogs default limit (150) so the limit param is meaningful
+const MAX_LOGS_LIMIT = 150;
 
 /**
  * Sanitize strings to redact passwords, auth credentials, tokens, and cookies
@@ -101,7 +102,9 @@ class LoggerManager {
    */
   add({ level = 'error', category = 'system', title = '', message = '', details = null }) {
     const timestamp = Date.now();
-    const id = `${timestamp}-${Math.random().toString(36).slice(2, 7)}`;
+    // P2-9 fix: use crypto.randomUUID() instead of Math.random() to prevent ID collisions
+    // during burst-logging where timestamp alone is not unique enough
+    const id = `${timestamp}-${crypto.randomUUID()}`;
 
     // Sanitize title and message against secrets
     const sanitizedTitle = sanitizeLogString(String(title || 'Неизвестная ошибка'));
