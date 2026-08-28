@@ -10,7 +10,7 @@ import { checkProxyHealth } from './proxy-checker.js';
 import { logger } from './logger.js';
 import { formatErrorMessage } from './errors-lib.js';
 import { ipToHost } from './ip-to-host.js';
-import { initProxyAuth } from './proxy-auth.js';
+import { resetProxyCredentialsState } from './proxy-auth.js';
 
 export function setupMessageBus() {
   if (chrome.runtime.onMessage.hasListeners && chrome.runtime.onMessage.hasListeners()) {
@@ -205,12 +205,13 @@ export function setupMessageBus() {
         }
 
         case 'GET_PAC_SCRIPT': {
+          const pacData = pacSync.getPacData();
           return {
             success: true,
             data: {
-              rawPacData: pacSync.rawPacData,
-              cookedPacData: pacSync.cookedPacData,
-              currentProvider: pacSync.currentPacProviderKey,
+              rawPacData: pacData.rawPacData,
+              cookedPacData: pacData.cookedPacData,
+              currentProvider: pacData.currentProvider,
             },
           };
         }
@@ -277,13 +278,14 @@ export function setupMessageBus() {
         }
 
         case 'RESET_SETTINGS': {
+          pacSync.resetRuntimeState();
           await storage.clear();
           pacKitchen.invalidateCache();
-          await initProxyAuth();
-          await ipToHost.init();
-          await pacSync.clearPac();
-          await pacSync.installPac('Антизапрет');
-          appState.reset();
+          resetProxyCredentialsState();
+          ipToHost.reset();
+          await pacSync.clearPac({ persist: false });
+          await pacSync.syncWithPacProvider({ key: 'Антизапрет', ifUnattended: true });
+          await appState.reset();
           return { success: true };
         }
 

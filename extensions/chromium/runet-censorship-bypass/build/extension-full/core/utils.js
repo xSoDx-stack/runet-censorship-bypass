@@ -44,11 +44,22 @@ export function parseProxyScheme(proxyAsStringRaw, defaultType = 'HTTPS') {
   if (!str) return null;
 
   const ALLOWED_PROTOCOLS = new Set(['HTTP', 'HTTPS', 'SOCKS4', 'SOCKS5', 'SOCKS']);
-  const firstToken = str.split(/\s+/)[0].toUpperCase();
-  let type = defaultType.toUpperCase();
-  if (ALLOWED_PROTOCOLS.has(firstToken)) {
-    type = firstToken;
-    str = str.slice(firstToken.length).trim();
+  let type = defaultType ? defaultType.toUpperCase() : 'HTTPS';
+  if (!ALLOWED_PROTOCOLS.has(type)) {
+    type = 'HTTPS';
+  }
+
+  // Check if string starts with a protocol token
+  if (/\s+/.test(str)) {
+    const tokens = str.split(/\s+/);
+    const firstToken = tokens[0].toUpperCase();
+    if (ALLOWED_PROTOCOLS.has(firstToken)) {
+      type = firstToken;
+      str = tokens.slice(1).join(' ').trim();
+    } else {
+      // Unknown protocol with space (e.g. "FTP proxy:8080", "BANANA host:1234") -> REJECT
+      return null;
+    }
   }
 
   let username = '';
@@ -88,10 +99,12 @@ export function parseProxyScheme(proxyAsStringRaw, defaultType = 'HTTPS') {
     // Bracketed IPv6: e.g. [2001:db8::1]:1080 or [::1]:8080
     const closeBracket = addr.indexOf(']');
     if (closeBracket === -1) return null;
-    hostname = addr.slice(0, closeBracket + 1).toLowerCase();
+    const ipContent = addr.slice(1, closeBracket).trim();
+    if (!ipContent || !ipContent.includes(':')) return null; // malformed IPv6
+    hostname = `[${ipContent.toLowerCase()}]`;
     const rest = addr.slice(closeBracket + 1);
     if (!rest.startsWith(':')) return null; // port is mandatory
-    portStr = rest.slice(1);
+    portStr = rest.slice(1).trim();
   } else {
     // IPv4 or Hostname: host:port
     const colonIndex = addr.lastIndexOf(':');
@@ -112,15 +125,42 @@ export function parseProxyScheme(proxyAsStringRaw, defaultType = 'HTTPS') {
 
   return {
     type,
+    protocol: type,
     hostname,
     port,
     username,
     password,
     creds,
     hostPort,
+    address: hostPort,
+    canonicalEndpoint: `${type} ${hostPort}`,
     hasAuth: Boolean(username || password),
     raw: proxyAsStringRaw.trim(),
   };
+}
+
+/**
+ * Parses raw multi-line custom proxy string using the single canonical parser.
+ *
+ * @param {string} rawString
+ * @returns {Array<object>}
+ */
+export function parseCustomProxies(rawString = '') {
+  if (!rawString || typeof rawString !== 'string') return [];
+  const lines = rawString
+    .replace(/#.*$/gm, '')
+    .split(/(?:\s*(?:;\r?\n)+\s*|\r?\n+|;\s*)+/g)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+
+  const result = [];
+  for (const line of lines) {
+    const parsed = parseProxyScheme(line);
+    if (parsed) {
+      result.push(parsed);
+    }
+  }
+  return result;
 }
 
 export const utils = {
@@ -153,6 +193,7 @@ export const utils = {
   },
 
   parseProxyScheme,
+  parseCustomProxies,
   getRootDomain,
 
   validatePacUrl(urlStr) {

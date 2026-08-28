@@ -63,6 +63,19 @@ describe('Utils: parseProxyScheme & getRootDomain (Tasks 6 & 7.1)', () => {
       expect(parseProxyScheme('HTTP proxy.example.com:80.5')).to.be.null;
     });
 
+    it('should reject unknown protocols and invalid prefixes', () => {
+      expect(parseProxyScheme('FTP proxy.example.com:8080')).to.be.null;
+      expect(parseProxyScheme('BANANA host:1234')).to.be.null;
+      expect(parseProxyScheme('GOPHER gopher.net:70')).to.be.null;
+    });
+
+    it('should correctly decode URI-encoded credentials with special characters', () => {
+      const res = parseProxyScheme('HTTPS user%40name:p%40ss%3Aword@proxy.example.com:443');
+      expect(res).to.exist;
+      expect(res.username).to.equal('user@name');
+      expect(res.password).to.equal('p@ss:word');
+    });
+
     it('should reject malformed input strings', () => {
       expect(parseProxyScheme('')).to.be.null;
       expect(parseProxyScheme('   ')).to.be.null;
@@ -71,6 +84,26 @@ describe('Utils: parseProxyScheme & getRootDomain (Tasks 6 & 7.1)', () => {
       expect(parseProxyScheme('HTTP [::1')).to.be.null; // unclosed bracket
       expect(parseProxyScheme('HTTP [::1]:')).to.be.null; // empty port
       expect(parseProxyScheme('HTTP :8080')).to.be.null; // empty hostname
+      expect(parseProxyScheme('HTTP []:8080')).to.be.null; // empty bracket
+    });
+
+    it('should parse multi-line custom proxy string using canonical parseCustomProxies', async () => {
+      const { parseCustomProxies } = await import('../src/extension-common/core/utils.js');
+      const raw = `
+        # Comment line
+        HTTPS user:pass@proxy1.com:443;
+        SOCKS5 [::1]:1080
+        FTP invalid:8080
+        HTTP 127.0.0.1:8080 # trailing comment
+      `;
+      const list = parseCustomProxies(raw);
+      expect(list).to.have.lengthOf(3);
+      expect(list[0].hostname).to.equal('proxy1.com');
+      expect(list[0].port).to.equal('443');
+      expect(list[0].username).to.equal('user');
+      expect(list[1].hostname).to.equal('[::1]');
+      expect(list[1].type).to.equal('SOCKS5');
+      expect(list[2].hostname).to.equal('127.0.0.1');
     });
   });
 

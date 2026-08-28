@@ -102,6 +102,11 @@ class IpToHostManager {
     }
   }
 
+  reset() {
+    this.ipToHostMap = Object.assign({}, DEFAULT_PROXY_IPS);
+    this.initialized = false;
+  }
+
   async persistData() {
     await storage.set(IP_STORAGE_KEY, this.ipToHostMap);
   }

@@ -1,6 +1,6 @@
 # 🛡️ АнтиЧебурнет (Manifest V3)
 
-[![Version](https://img.shields.io/badge/version-2.2.18-blue.svg?style=flat-square)](./package.json)
+[![Version](https://img.shields.io/badge/version-2.2.19-blue.svg?style=flat-square)](./package.json)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-green.svg?style=flat-square)](./LICENSE)
 [![Manifest V3](https://img.shields.io/badge/Platform-Chromium%20MV3-orange.svg?style=flat-square)](https://developer.chrome.com/docs/extensions/mv3/intro/)
 [![Telemetry: None](https://img.shields.io/badge/Telemetry-None-success.svg?style=flat-square)](#-отсутствие-телеметрии-и-внешних-трекеров)

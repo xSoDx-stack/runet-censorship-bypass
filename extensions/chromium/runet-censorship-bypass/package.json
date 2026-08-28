@@ -1,6 +1,6 @@
 {
   "name": "anticheburnet",
-  "version": "2.2.18",
+  "version": "2.2.19",
   "description": "АнтиЧебурнет - расширение для обхода интернет-цензуры (Manifest V3)",
   "scripts": {
     "lint": "eslint ./src/**/*.js ./test/**/*.js --ignore-pattern vendor",

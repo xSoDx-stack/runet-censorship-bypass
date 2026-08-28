@@ -117,6 +117,40 @@ describe('PAC Kitchen: Concurrency, Persist-First & Reset (Tasks 2, 3, 4)', () =
     expect(afterMods.ifUseSecureProxiesOnly).to.equal(false);
   });
 
+  it('Task 3b: When storage write fails, proxyAuth active in-memory credentials do NOT switch to new unpersisted credentials', async () => {
+    // 1. Initially saved valid proxy credentials
+    await pacKitchen.savePacMods({
+      customProxyStringRaw: 'HTTPS initialUser:initialPass@valid.proxy.com:443',
+    });
+
+    const { findCredentials } = await import('../src/extension-common/core/proxy-auth.js');
+    expect(findCredentials('valid.proxy.com', 443)).to.deep.equal({
+      username: 'initialUser',
+      password: 'initialPass',
+    });
+
+    // 2. Storage write fails on new update
+    storageWriteShouldFail = true;
+
+    let threw = false;
+    try {
+      await pacKitchen.savePacMods({
+        customProxyStringRaw: 'HTTPS newUser:newPass@unwritten.proxy.com:443',
+      });
+    } catch {
+      threw = true;
+    }
+
+    expect(threw).to.be.true;
+
+    // 3. Verify in-memory proxyAuth map STILL has initial credentials and did NOT adopt unwritten ones
+    expect(findCredentials('valid.proxy.com', 443)).to.deep.equal({
+      username: 'initialUser',
+      password: 'initialPass',
+    });
+    expect(findCredentials('unwritten.proxy.com', 443)).to.be.null;
+  });
+
   it('Task 4: RESET_SETTINGS clears storage and RAM cache, returning to default state', async () => {
     // 1. Save custom mods
     await pacKitchen.savePacMods({

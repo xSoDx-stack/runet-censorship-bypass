@@ -34,7 +34,7 @@ export async function initProxyAuth() {
   persistentCredentialsMap = Object.assign({}, saved);
 }
 
-export async function updateProxyCredentialsFromRaw(customProxyStringRaw = '') {
+export function buildProxyCredentialsMap(customProxyStringRaw = '') {
   const newMap = {};
   if (customProxyStringRaw) {
     const lines = customProxyStringRaw
@@ -60,10 +60,23 @@ export async function updateProxyCredentialsFromRaw(customProxyStringRaw = '') {
       }
     }
   }
+  return newMap;
+}
 
-  persistentCredentialsMap = newMap;
+export function commitProxyCredentials(newMap) {
+  persistentCredentialsMap = Object.assign({}, newMap || {});
+}
+
+export function resetProxyCredentialsState() {
+  persistentCredentialsMap = {};
+  temporaryCredentialsMap = {};
+}
+
+export async function updateProxyCredentialsFromRaw(customProxyStringRaw = '') {
+  const newMap = buildProxyCredentialsMap(customProxyStringRaw);
   await storage.set('proxy-credentials-map', newMap);
-  return persistentCredentialsMap;
+  commitProxyCredentials(newMap);
+  return getPersistentCredentialsMap();
 }
 
 export function registerTemporaryCredentials(hostname, port, username, password) {

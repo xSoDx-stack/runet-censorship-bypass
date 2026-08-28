@@ -2,7 +2,12 @@
 
 import { storage } from './storage.js';
 import { utils } from './utils.js';
-import { updateProxyCredentialsFromRaw, setupAuthListener, initProxyAuth } from './proxy-auth.js';
+import {
+  buildProxyCredentialsMap,
+  commitProxyCredentials,
+  setupAuthListener,
+  initProxyAuth,
+} from './proxy-auth.js';
 
 const KITCHEN_STARTS_MARK = '\n\n//%#@@@@@@ PAC_KITCHEN_STARTS @@@@@@#%';
 const MODS_KEY = 'pac-kitchen-mods';
@@ -308,7 +313,7 @@ export function cookPac(pacData, pacMods) {
   if (pacMods.ifUseLocalTor && pacMods.torPoints) {
     generatedPac += `
     if (host.endsWith(".onion")) {
-      return "${pacMods.torPoints.join('; ')}";
+      return ${JSON.stringify(pacMods.torPoints.join('; '))};
     }
 `;
   }
@@ -317,7 +322,7 @@ export function cookPac(pacData, pacMods) {
   const failClosedProxy = 'PROXY 127.0.0.1:0';
 
   generatedPac += `
-    const failClosedProxy = "${failClosedProxy}";
+    const failClosedProxy = ${JSON.stringify(failClosedProxy)};
     const ifProxyOrDie = ${ifProxyOrDie};
     const directIfAllowed = ifProxyOrDie ? "" : "DIRECT";
     const filteredCustomProxies = ${JSON.stringify(pacMods.filteredCustomsString || '')};
@@ -463,12 +468,16 @@ export function cookPac(pacData, pacMods) {
 `;
 
   if (pacMods.replaceDirectWith) {
-    // P2.8: Escape $ signs to prevent regex replacement injection (e.g. $1, $& etc.)
-    const safeReplacement = pacMods.replaceDirectWith.replace(/\$/g, '$$$$');
+    const directReplacementJson = JSON.stringify(pacMods.replaceDirectWith);
     generatedPac += `
+  const directReplacement = ${directReplacementJson};
   const oldTmp = tmp;
   tmp = function(url, host) {
-    return oldTmp.call(this, url, host).replace(/(;|^)\\s*DIRECT\\s*(?=;|$)/g, "$1${safeReplacement}");
+    const res = oldTmp.call(this, url, host);
+    if (typeof res !== 'string') return res;
+    return res.replace(/(;|^)\\s*DIRECT\\s*(?=;|$)/g, function(match, p1) {
+      return (p1 ? p1 + " " : "") + directReplacement;
+    });
   };
 `;
   }
@@ -557,7 +566,8 @@ export const pacKitchen = {
       storage.get('pac-exception-stats', null),
     ]);
     _cachedRawMods = rawMods;
-    await updateProxyCredentialsFromRaw(rawMods.customProxyStringRaw || '');
+    const newCredsMap = buildProxyCredentialsMap(rawMods.customProxyStringRaw || '');
+    commitProxyCredentials(newCredsMap);
     const [, mods] = createPacModifiers(rawMods);
     _cachedParsedMods = mods || getDefaults();
     if (savedStats && typeof savedStats === 'object' && savedStats.includedCount !== undefined) {
@@ -579,8 +589,8 @@ export const pacKitchen = {
   },
 
   /**
-   * P1-3: Persist-first savePacMods.
-   * Validates input, persists to storage, and ONLY updates RAM cache if storage write succeeds.
+   * P1-3: Persist-first savePacMods with transactional credentials consistency.
+   * Validates input, persists all storage items, and ONLY updates RAM caches if storage write succeeds.
    */
   async savePacMods(newMods) {
     const [err, parsedMods] = createPacModifiers(newMods);
@@ -588,18 +598,20 @@ export const pacKitchen = {
       throw err;
     }
     const newStats = calculateExceptionStats(newMods.exceptions, newMods.whitelist);
+    const newCredsMap = buildProxyCredentialsMap(newMods.customProxyStringRaw || '');
 
-    // 1. Persist to storage and credentials map first
+    // 1. Persist ALL storage records FIRST
     await Promise.all([
-      updateProxyCredentialsFromRaw(newMods.customProxyStringRaw || ''),
+      storage.set('proxy-credentials-map', newCredsMap),
       storage.set(MODS_KEY, newMods),
       storage.set('pac-exception-stats', newStats),
     ]);
 
-    // 2. Only on success, publish to in-memory cache
+    // 2. Only on success, publish to in-memory caches
     _cachedRawMods = newMods;
     _cachedParsedMods = parsedMods;
     _cachedStats = newStats;
+    commitProxyCredentials(newCredsMap);
 
     return parsedMods;
   },

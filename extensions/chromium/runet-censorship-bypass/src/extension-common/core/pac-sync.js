@@ -73,6 +73,25 @@ class PacSyncManager {
     this.isControllable = false;
     this.isInitialized = false;
     this.revision = 0;
+
+    // Pending sync queue mechanism (Task 1)
+    this._isSyncRunning = false;
+    this._currentSyncPromise = null;
+    this._currentRunningOptions = null;
+    this._pendingSync = null;
+  }
+
+  resetRuntimeState() {
+    this.currentPacProviderKey = 'Антизапрет';
+    this.customPacUrl = '';
+    this.lastPacUpdateStamp = 0;
+    this.providerUpdateStamps = {};
+    this.rawPacData = '';
+    this.cookedPacData = '';
+    this.lastError = null;
+    this.revision++;
+    this._pendingSync = null;
+    this.updateTitle();
   }
 
   async init() {
@@ -317,12 +336,106 @@ class PacSyncManager {
     return false;
   }
 
+  _isSameSyncRequest(optA, optB) {
+    if (!optA || !optB) return false;
+    return (
+      (optA.key || '') === (optB.key || '') &&
+      (optA.customUrl || '') === (optB.customUrl || '') &&
+      Boolean(optA.ifUnattended) === Boolean(optB.ifUnattended)
+    );
+  }
+
   async syncWithPacProvider({ key = this.currentPacProviderKey, customUrl = null, ifUnattended = false } = {}) {
-    if (this.isSyncing) {
-      console.log('PAC sync already in progress, skipping...');
-      return;
+    const requestOptions = { key, customUrl, ifUnattended };
+
+    // If no sync is currently in-flight, start the execution loop immediately
+    if (!this._isSyncRunning) {
+      this._isSyncRunning = true;
+      this.isSyncing = true;
+      this._currentSyncPromise = this._runSyncLoop(requestOptions);
+      try {
+        return await this._currentSyncPromise;
+      } finally {
+        this._isSyncRunning = false;
+        this.isSyncing = false;
+        this._currentSyncPromise = null;
+        this._currentRunningOptions = null;
+      }
     }
 
+    // A sync is currently in progress.
+    // If this request is identical to the current running request AND there is no pending request yet, await it.
+    if (!this._pendingSync && this._isSameSyncRequest(this._currentRunningOptions, requestOptions)) {
+      return this._currentSyncPromise;
+    }
+
+    // Otherwise, enqueue as the latest desired pending request (replaces any older pending request)
+    return new Promise((resolve, reject) => {
+      if (this._pendingSync) {
+        if (this._isSameSyncRequest(this._pendingSync.options, requestOptions)) {
+          this._pendingSync.deferreds.push({ resolve, reject });
+          return;
+        }
+        // Update to the newer desired request and attach deferreds
+        this._pendingSync.options = requestOptions;
+        this._pendingSync.deferreds.push({ resolve, reject });
+      } else {
+        this._pendingSync = {
+          options: requestOptions,
+          deferreds: [{ resolve, reject }],
+        };
+      }
+    });
+  }
+
+  async _runSyncLoop(initialOptions) {
+    let nextOptions = initialOptions;
+    let initialCallerError = null;
+    let pendingDeferredsToResolve = [];
+
+    while (nextOptions) {
+      this._currentRunningOptions = nextOptions;
+
+      if (this._pendingSync && this._isSameSyncRequest(this._pendingSync.options, nextOptions)) {
+        pendingDeferredsToResolve.push(...this._pendingSync.deferreds);
+        this._pendingSync = null;
+      }
+
+      let stepError = null;
+      try {
+        await this._performSync(nextOptions);
+        for (const d of pendingDeferredsToResolve) {
+          d.resolve();
+        }
+      } catch (err) {
+        stepError = err;
+        for (const d of pendingDeferredsToResolve) {
+          d.reject(err);
+        }
+      }
+      pendingDeferredsToResolve = [];
+
+      if (nextOptions === initialOptions) {
+        initialCallerError = stepError;
+      }
+
+      // Check if another pending request arrived while executing this step
+      if (this._pendingSync) {
+        const pending = this._pendingSync;
+        this._pendingSync = null;
+        nextOptions = pending.options;
+        pendingDeferredsToResolve = pending.deferreds;
+      } else {
+        nextOptions = null;
+      }
+    }
+
+    if (initialCallerError && !initialOptions.ifUnattended) {
+      throw initialCallerError;
+    }
+  }
+
+  async _performSync({ key = this.currentPacProviderKey, customUrl = null, ifUnattended = false } = {}) {
     if (key === 'none' || !key) {
       await this.clearPac();
       return;
@@ -333,20 +446,15 @@ class PacSyncManager {
       throw new Error(`Неизвестный провайдер PAC: ${key}`);
     }
 
-    this.isSyncing = true;
     this.lastError = null;
 
     try {
       console.log(`[PAC Sync] Downloading PAC for provider "${key}"...`);
       const candidateRaw = await this.downloadPacFromProvider(provider, customUrl);
 
-      // P0.2: Delegate cook+set+atomic-commit to applyPacData (single source of truth)
-      // applyPacData handles: cook, chrome.proxy.settings.set, rawPacData, cookedPacData,
-      // ipToHost.updateFromPac, updateControlState, and revision++
       console.log('[PAC Sync] Cooking and applying PAC script...');
       await this.applyPacData(candidateRaw);
 
-      // Additional bookkeeping specific to a full provider sync (not in applyPacData)
       this.currentPacProviderKey = key;
       if (key === 'customPacUrl' && customUrl) {
         this.customPacUrl = customUrl.trim();
@@ -356,7 +464,6 @@ class PacSyncManager {
       this.lastPacUpdateStamp = now;
       this.providerUpdateStamps[key] = now;
       await this.persistState();
-      // Note: updateControlState already called by applyPacData
 
       console.log('[PAC Sync] Successfully updated PAC!');
       logger.info('pac', `PAC-скрипт "${key}" успешно обновлён`, `Размер PAC: ${(candidateRaw.length / 1024).toFixed(1)} КБ`, {
@@ -375,8 +482,6 @@ class PacSyncManager {
       if (!ifUnattended) {
         throw new Error(errorMsg);
       }
-    } finally {
-      this.isSyncing = false;
     }
   }
 
@@ -384,7 +489,7 @@ class PacSyncManager {
     await this.syncWithPacProvider({ key, customUrl, ifUnattended: false });
   }
 
-  async clearPac() {
+  async clearPac({ persist = true } = {}) {
     await new Promise((resolve, reject) => {
       chrome.proxy.settings.clear({ scope: 'regular' }, () => {
         if (chrome.runtime.lastError) {
@@ -399,7 +504,9 @@ class PacSyncManager {
     this.currentPacProviderKey = 'none';
     this.rawPacData = '';
     this.cookedPacData = '';
-    await this.persistState();
+    if (persist) {
+      await this.persistState();
+    }
     await this.updateControlState();
   }
 
@@ -424,6 +531,14 @@ class PacSyncManager {
     return this.revision;
   }
 
+  getPacData() {
+    return {
+      rawPacData: this.rawPacData,
+      cookedPacData: this.cookedPacData,
+      currentProvider: this.currentPacProviderKey,
+    };
+  }
+
   getState() {
     return {
       currentPacProviderKey: this.currentPacProviderKey,
@@ -435,7 +550,8 @@ class PacSyncManager {
       isControllable: this.isControllable,
       lastError: this.lastError ? this.lastError.message : null,
       providers: PAC_PROVIDERS,
-      rawPacData: this.rawPacData,
+      hasPacData: Boolean(this.rawPacData),
+      revision: this.revision,
     };
   }
 }

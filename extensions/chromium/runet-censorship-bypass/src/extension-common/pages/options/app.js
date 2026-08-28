@@ -395,40 +395,121 @@ async function handleResetCurrentSitePac() {
   }
 }
 
-// Parse Raw Custom Proxy String into structured array
+// Canonical proxy parser implementation
+function parseProxyScheme(proxyAsStringRaw, defaultType = 'HTTPS') {
+  if (!proxyAsStringRaw || typeof proxyAsStringRaw !== 'string') return null;
+  let str = proxyAsStringRaw.trim();
+  if (!str) return null;
+
+  const ALLOWED_PROTOCOLS = new Set(['HTTP', 'HTTPS', 'SOCKS4', 'SOCKS5', 'SOCKS']);
+  let type = defaultType ? defaultType.toUpperCase() : 'HTTPS';
+  if (!ALLOWED_PROTOCOLS.has(type)) {
+    type = 'HTTPS';
+  }
+
+  if (/\s+/.test(str)) {
+    const tokens = str.split(/\s+/);
+    const firstToken = tokens[0].toUpperCase();
+    if (ALLOWED_PROTOCOLS.has(firstToken)) {
+      type = firstToken;
+      str = tokens.slice(1).join(' ').trim();
+    } else {
+      return null;
+    }
+  }
+
+  let username = '';
+  let password = '';
+  let creds = '';
+  let addr = str;
+
+  if (str.includes('@')) {
+    const atIndex = str.lastIndexOf('@');
+    creds = str.slice(0, atIndex);
+    addr = str.slice(atIndex + 1);
+
+    if (creds) {
+      const credParts = creds.split(':');
+      const rawUser = credParts[0] || '';
+      const rawPass = credParts.slice(1).join(':') || '';
+      try {
+        username = decodeURIComponent(rawUser);
+      } catch {
+        username = rawUser;
+      }
+      try {
+        password = decodeURIComponent(rawPass);
+      } catch {
+        password = rawPass;
+      }
+    }
+  }
+
+  addr = addr.trim();
+  if (!addr) return null;
+
+  let hostname = '';
+  let portStr = '';
+
+  if (addr.startsWith('[')) {
+    const closeBracket = addr.indexOf(']');
+    if (closeBracket === -1) return null;
+    const ipContent = addr.slice(1, closeBracket).trim();
+    if (!ipContent || !ipContent.includes(':')) return null;
+    hostname = `[${ipContent.toLowerCase()}]`;
+    const rest = addr.slice(closeBracket + 1);
+    if (!rest.startsWith(':')) return null;
+    portStr = rest.slice(1).trim();
+  } else {
+    const colonIndex = addr.lastIndexOf(':');
+    if (colonIndex === -1) return null;
+    hostname = addr.slice(0, colonIndex).toLowerCase().trim();
+    portStr = addr.slice(colonIndex + 1).trim();
+  }
+
+  if (!hostname) return null;
+
+  const portNum = Number(portStr);
+  if (!Number.isInteger(portNum) || portNum < 1 || portNum > 65535) {
+    return null;
+  }
+
+  const port = String(portNum);
+  const hostPort = `${hostname}:${port}`;
+
+  return {
+    type,
+    protocol: type,
+    hostname,
+    port,
+    username,
+    password,
+    creds,
+    hostPort,
+    address: hostPort,
+    canonicalEndpoint: `${type} ${hostPort}`,
+    hasAuth: Boolean(username || password),
+    raw: proxyAsStringRaw.trim(),
+  };
+}
+
+// Parse Raw Custom Proxy String into structured array using canonical parser
 function parseCustomProxies(rawString = '') {
-  if (!rawString) return [];
-  return rawString
+  if (!rawString || typeof rawString !== 'string') return [];
+  const lines = rawString
     .replace(/#.*$/gm, '')
     .split(/(?:\s*(?:;\r?\n)+\s*|\r?\n+|;\s*)+/g)
-    .map((p) => p.trim())
-    .filter((p) => p && /\s+/g.test(p))
-    .map((pStr) => {
-      const [type, rest = ''] = pStr.split(/\s+/);
-      let hostPart = rest;
-      let user = '';
-      let pass = '';
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
 
-      if (rest.includes('@')) {
-        const parts = rest.split('@');
-        const creds = parts.slice(0, -1).join('@');
-        hostPart = parts[parts.length - 1];
-        if (creds) {
-          const credParts = creds.split(':');
-          user = credParts[0] || '';
-          pass = credParts.slice(1).join(':') || '';
-        }
-      }
-
-      return {
-        raw: pStr,
-        type: (type || 'HTTP').toUpperCase(),
-        address: hostPart,
-        user,
-        pass,
-        hasAuth: Boolean(user || pass),
-      };
-    });
+  const result = [];
+  for (const line of lines) {
+    const parsed = parseProxyScheme(line);
+    if (parsed) {
+      result.push(parsed);
+    }
+  }
+  return result;
 }
 
 // Check if at least one proxy / tor / warp is working

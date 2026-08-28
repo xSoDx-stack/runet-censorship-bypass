@@ -30,7 +30,7 @@ var __originalFindProxyForURL = (typeof FindProxyForURL === 'function')
 
 FindProxyForURL = function(url, host) {
   if (host === '1.1.1.1' || host === 'cloudflare.com' || host === 'cp.cloudflare.com' || host === 'connectivitycheck.gstatic.com' || host === 'dns.google') {
-    return "${testProxyScheme}";
+    return ${JSON.stringify(testProxyScheme)};
   }
   return __originalFindProxyForURL(url, host);
 };
