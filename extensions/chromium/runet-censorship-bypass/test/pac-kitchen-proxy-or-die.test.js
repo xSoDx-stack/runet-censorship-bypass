@@ -272,4 +272,40 @@ function FindProxyForURL(url, host) {
       expect(appliedProxyConfigs[appliedProxyConfigs.length - 1].pacScript.mandatory).to.be.true;
     });
   });
+
+  describe('Hierarchical Suffix & Wildcard PAC Exception Matching', () => {
+    it('should correctly match wildcard domains and subdomains via O(1) hash hierarchy', () => {
+      const mods = {
+        ifMindExceptions: true,
+        exceptions: {
+          '*.rutracker.org': true,
+          'exact-only.com': true,
+          '*.direct-exception.net': false,
+        },
+        filteredCustomsString: 'HTTPS proxy-node.org:443',
+        ifProxyOrDie: true,
+        ifUsePacScriptProxies: true,
+      };
+
+      const cooked = cookPac(basePac, mods);
+      const findProxy = evaluateCookedPac(cooked);
+
+      // Root domain of wildcard
+      expect(findProxy('https://rutracker.org/', 'rutracker.org')).to.equal('HTTPS proxy-node.org:443');
+      // Subdomain of wildcard
+      expect(findProxy('https://forum.rutracker.org/', 'forum.rutracker.org')).to.equal('HTTPS proxy-node.org:443');
+      // Deep nested subdomain of wildcard
+      expect(findProxy('https://sub.deep.rutracker.org/', 'sub.deep.rutracker.org')).to.equal('HTTPS proxy-node.org:443');
+
+      // Exact domain match
+      expect(findProxy('https://exact-only.com/path', 'exact-only.com')).to.equal('HTTPS proxy-node.org:443');
+
+      // Negative wildcard match (DIRECT exception)
+      expect(findProxy('https://api.direct-exception.net/', 'api.direct-exception.net')).to.equal('DIRECT');
+
+      // Non-matching domain should fall back to original PAC (DIRECT)
+      expect(findProxy('https://unrelated-domain.com/', 'unrelated-domain.com')).to.equal('DIRECT');
+    });
+  });
 });
+

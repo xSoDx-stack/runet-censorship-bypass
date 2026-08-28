@@ -1,11 +1,13 @@
 'use strict';
 
+import { parseCustomProxies } from '../../core/utils.js';
+
 /**
  * Options & Popup Application Logic for Manifest V3
  */
 
-// P2.3: Single source of truth for the default version fallback
-const DEFAULT_VERSION = '2.2.17';
+// Single source of truth for fallback version placeholder
+const DEFAULT_VERSION = '';
 
 // State
 let appState = {
@@ -36,9 +38,9 @@ let appState = {
 };
 
 function formatVersion(ver) {
-  if (!ver) return `v${DEFAULT_VERSION}`;
+  if (!ver) return DEFAULT_VERSION ? `v${DEFAULT_VERSION}` : '';
   let clean = String(ver).replace(/^0\.0\./, '').replace(/^v+/i, '').trim();
-  return `v${clean}`;
+  return clean ? `v${clean}` : '';
 }
 
 // DOM Elements Cache
@@ -393,123 +395,6 @@ async function handleResetCurrentSitePac() {
     render();
     showToast(`🔄 ${domain} (и все поддомены): сброшено на стандартные правила PAC`);
   }
-}
-
-// Canonical proxy parser implementation
-function parseProxyScheme(proxyAsStringRaw, defaultType = 'HTTPS') {
-  if (!proxyAsStringRaw || typeof proxyAsStringRaw !== 'string') return null;
-  let str = proxyAsStringRaw.trim();
-  if (!str) return null;
-
-  const ALLOWED_PROTOCOLS = new Set(['HTTP', 'HTTPS', 'SOCKS4', 'SOCKS5', 'SOCKS']);
-  let type = defaultType ? defaultType.toUpperCase() : 'HTTPS';
-  if (!ALLOWED_PROTOCOLS.has(type)) {
-    type = 'HTTPS';
-  }
-
-  if (/\s+/.test(str)) {
-    const tokens = str.split(/\s+/);
-    const firstToken = tokens[0].toUpperCase();
-    if (ALLOWED_PROTOCOLS.has(firstToken)) {
-      type = firstToken;
-      str = tokens.slice(1).join(' ').trim();
-    } else {
-      return null;
-    }
-  }
-
-  let username = '';
-  let password = '';
-  let creds = '';
-  let addr = str;
-
-  if (str.includes('@')) {
-    const atIndex = str.lastIndexOf('@');
-    creds = str.slice(0, atIndex);
-    addr = str.slice(atIndex + 1);
-
-    if (creds) {
-      const credParts = creds.split(':');
-      const rawUser = credParts[0] || '';
-      const rawPass = credParts.slice(1).join(':') || '';
-      try {
-        username = decodeURIComponent(rawUser);
-      } catch {
-        username = rawUser;
-      }
-      try {
-        password = decodeURIComponent(rawPass);
-      } catch {
-        password = rawPass;
-      }
-    }
-  }
-
-  addr = addr.trim();
-  if (!addr) return null;
-
-  let hostname = '';
-  let portStr = '';
-
-  if (addr.startsWith('[')) {
-    const closeBracket = addr.indexOf(']');
-    if (closeBracket === -1) return null;
-    const ipContent = addr.slice(1, closeBracket).trim();
-    if (!ipContent || !ipContent.includes(':')) return null;
-    hostname = `[${ipContent.toLowerCase()}]`;
-    const rest = addr.slice(closeBracket + 1);
-    if (!rest.startsWith(':')) return null;
-    portStr = rest.slice(1).trim();
-  } else {
-    const colonIndex = addr.lastIndexOf(':');
-    if (colonIndex === -1) return null;
-    hostname = addr.slice(0, colonIndex).toLowerCase().trim();
-    portStr = addr.slice(colonIndex + 1).trim();
-  }
-
-  if (!hostname) return null;
-
-  const portNum = Number(portStr);
-  if (!Number.isInteger(portNum) || portNum < 1 || portNum > 65535) {
-    return null;
-  }
-
-  const port = String(portNum);
-  const hostPort = `${hostname}:${port}`;
-
-  return {
-    type,
-    protocol: type,
-    hostname,
-    port,
-    username,
-    password,
-    creds,
-    hostPort,
-    address: hostPort,
-    canonicalEndpoint: `${type} ${hostPort}`,
-    hasAuth: Boolean(username || password),
-    raw: proxyAsStringRaw.trim(),
-  };
-}
-
-// Parse Raw Custom Proxy String into structured array using canonical parser
-function parseCustomProxies(rawString = '') {
-  if (!rawString || typeof rawString !== 'string') return [];
-  const lines = rawString
-    .replace(/#.*$/gm, '')
-    .split(/(?:\s*(?:;\r?\n)+\s*|\r?\n+|;\s*)+/g)
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0);
-
-  const result = [];
-  for (const line of lines) {
-    const parsed = parseProxyScheme(line);
-    if (parsed) {
-      result.push(parsed);
-    }
-  }
-  return result;
 }
 
 // Check if at least one proxy / tor / warp is working
@@ -1509,7 +1394,7 @@ async function loadState(currentDomain = '') {
     appState.defaultConfigs = res.data.defaultConfigs || appState.defaultConfigs;
     appState.notifications = res.data.notifications || appState.notifications;
     appState.lastErrors = res.data.lastErrors || appState.lastErrors;
-    appState.version = formatVersion(res.data.version || '2.2.16');
+    appState.version = formatVersion(res.data.version || (typeof chrome !== 'undefined' && chrome.runtime?.getManifest?.()?.version) || DEFAULT_VERSION);
     appState.exceptionStats = res.data.exceptionStats || appState.exceptionStats;
     if (res.data.currentSiteMatch) {
       appState.currentSiteMatch = res.data.currentSiteMatch;
@@ -1640,15 +1525,23 @@ function setupEvents() {
     try {
       const parsed = new URL(rawUrl);
       if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-        showToast('Разрешены только протоколы HTTPS и HTTP');
+        showToast(`Недопустимый протокол: ${parsed.protocol}. Разрешён только https:`);
+        return;
+      }
+      const host = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+      const isPrivateOrLocal = host === 'localhost' || host === '127.0.0.1' || host === '::1' ||
+        /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host) ||
+        /^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(host) ||
+        /^192\.168\.\d{1,3}\.\d{1,3}$/.test(host) ||
+        /^169\.254\.\d{1,3}\.\d{1,3}$/.test(host) ||
+        /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
+      if (parsed.protocol === 'http:' && !isPrivateOrLocal) {
+        showToast('Разрешён только защищённый протокол https:. Небезопасный http: заблокирован.');
         return;
       }
       if (parsed.username || parsed.password) {
         showToast('URL не должен содержать логин и пароль (user:password@)');
         return;
-      }
-      if (parsed.protocol === 'http:') {
-        showToast('⚠️ Используется незащищённый HTTP (локальная сеть)');
       }
     } catch {
       showToast('Некорректный формат URL');

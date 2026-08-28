@@ -18,6 +18,10 @@ export function setupMessageBus() {
   }
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (sender && sender.id && chrome.runtime?.id && sender.id !== chrome.runtime.id) {
+      return false;
+    }
+
     if (!message || !message.action) {
       return false;
     }

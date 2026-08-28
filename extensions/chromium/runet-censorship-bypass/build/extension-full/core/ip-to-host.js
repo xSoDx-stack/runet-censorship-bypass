@@ -3,6 +3,7 @@
 import { storage } from './storage.js';
 
 const IP_STORAGE_KEY = 'ip-to-host';
+const MAX_IP_MAP_SIZE = 500;
 
 const DEFAULT_PROXY_IPS = {
   // Local Tor / Xray / SOCKS5 / Shadowsocks / Sing-box proxies
@@ -55,6 +56,10 @@ class IpToHostManager {
     if (!host) return;
     const cleanHost = String(host).trim();
     if (!cleanHost) return;
+
+    if (Object.keys(this.ipToHostMap).length > MAX_IP_MAP_SIZE) {
+      this.ipToHostMap = Object.assign({}, DEFAULT_PROXY_IPS);
+    }
 
     // Safe IP extraction: handles bare IPs, host:port, [ipv6]:port and bare [ipv6]
     let bareIp = cleanHost;

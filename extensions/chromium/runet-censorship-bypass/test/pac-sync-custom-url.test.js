@@ -71,6 +71,10 @@ describe('Custom PAC URL Pipeline and Validation', () => {
       const httpRes = utils.validatePacUrl('http://192.168.1.100:8080/wpad.dat');
       expect(httpRes.valid).to.be.true;
       expect(httpRes.isHttp).to.be.true;
+
+      const publicHttp = utils.validatePacUrl('http://example.com/proxy.pac');
+      expect(publicHttp.valid).to.be.false;
+      expect(publicHttp.error).to.include('Небезопасный http: заблокирован');
     });
 
     it('should reject dangerous or unsupported protocols (javascript, data, file, chrome)', () => {

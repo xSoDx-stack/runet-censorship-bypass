@@ -212,7 +212,22 @@ export const utils = {
     if (proto !== 'https:' && proto !== 'http:') {
       return {
         valid: false,
-        error: `Недопустимый протокол: ${proto}. Разрешены только https: и http:`,
+        error: `Недопустимый протокол: ${proto}. Разрешён только https:`,
+      };
+    }
+
+    const host = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    const isPrivateOrLocal = host === 'localhost' || host === '127.0.0.1' || host === '::1' ||
+      /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host) ||
+      /^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(host) ||
+      /^192\.168\.\d{1,3}\.\d{1,3}$/.test(host) ||
+      /^169\.254\.\d{1,3}\.\d{1,3}$/.test(host) ||
+      /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
+
+    if (proto === 'http:' && !isPrivateOrLocal) {
+      return {
+        valid: false,
+        error: 'Разрешён только защищённый протокол https:. Небезопасный http: заблокирован.',
       };
     }
 

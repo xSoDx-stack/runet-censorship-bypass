@@ -43,4 +43,23 @@ describe('BlockInformer & IpToHost', () => {
     stats = blockInformer.getTabStats(tabId);
     expect(stats.count).to.equal(0);
   });
+
+  it('should safely handle handleRequest even during cold start and ignore internal URLs', async () => {
+    const tabId = 1001;
+    blockInformer.clearTab(tabId);
+
+    // Internal browser/extension URLs should be ignored
+    await blockInformer.handleRequest({ tabId, url: 'chrome-extension://xyz/options.html', ip: '195.201.201.32' });
+    let stats = blockInformer.getTabStats(tabId);
+    expect(stats.count).to.equal(0);
+
+    // Proxy IP request
+    await blockInformer.handleRequest({ tabId, url: 'https://rutracker.org/forum/index.php', ip: '195.201.201.32', type: 'main_frame' });
+    stats = blockInformer.getTabStats(tabId);
+    expect(stats.count).to.equal(1);
+    expect(stats.hosts).to.include('rutracker.org');
+
+    blockInformer.clearTab(tabId);
+  });
 });
+

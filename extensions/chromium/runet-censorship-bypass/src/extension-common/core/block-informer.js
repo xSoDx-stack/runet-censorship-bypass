@@ -3,6 +3,8 @@
 import { ipToHost } from './ip-to-host.js';
 import { pacKitchen, matchExceptionDomain } from './pac-kitchen.js';
 import { pacSync } from './pac-sync.js';
+import { logger } from './logger.js';
+import { appState } from './app-state.js';
 
 class BlockInformer {
   constructor() {
@@ -64,10 +66,45 @@ class BlockInformer {
 
     if (chrome.webRequest && chrome.webRequest.onErrorOccurred) {
       chrome.webRequest.onErrorOccurred.addListener(
-        (details) => this.handleRequest(details),
+        (details) => {
+          this.handleRequest(details);
+          this.handleConnectionError(details);
+        },
         { urls: ['<all_urls>'] }
       );
     }
+  }
+
+  handleConnectionError(details) {
+    const errStr = String(details?.error || '');
+    // Only capture genuine proxy tunnel / proxy connection errors
+    if (!errStr || (!errStr.includes('PROXY') && !errStr.includes('TUNNEL'))) {
+      return;
+    }
+
+    // Ignore internal extension URLs
+    if (details.url && details.url.startsWith('chrome-extension://')) {
+      return;
+    }
+
+    let parsedDomain = '';
+    try {
+      parsedDomain = new URL(details.url).hostname;
+    } catch {
+      parsedDomain = '';
+    }
+
+    logger.add({
+      level: 'error',
+      category: 'proxy',
+      title: errStr,
+      message: `Сбой прокси при обращении к ${parsedDomain || 'серверу'}`,
+      details: {
+        error: details.error,
+        domain: parsedDomain,
+        type: details.type,
+      },
+    });
   }
 
   clearTab(tabId) {
@@ -92,7 +129,7 @@ class BlockInformer {
     }
   }
 
-  handleRequest(details) {
+  async handleRequest(details) {
     if (!details || typeof details.tabId !== 'number' || details.tabId < 0 || !details.url) {
       return;
     }
@@ -112,6 +149,14 @@ class BlockInformer {
     const hostname = parsedUrl.hostname.toLowerCase();
     if (!hostname || hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') {
       return;
+    }
+
+    if (!appState.isInitialized) {
+      try {
+        await appState.ensureInitialized();
+      } catch {
+        // Non-critical: continue with available state
+      }
     }
 
     let proxyHost = null;

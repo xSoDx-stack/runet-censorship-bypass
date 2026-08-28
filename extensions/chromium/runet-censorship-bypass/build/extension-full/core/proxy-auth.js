@@ -3,6 +3,7 @@
 import { storage } from './storage.js';
 import { utils } from './utils.js';
 import { appState } from './app-state.js';
+import { logger } from './logger.js';
 
 /**
  * Proxy Authentication Manager for Chrome MV3
@@ -231,7 +232,8 @@ export function setupAuthListener() {
             }
 
             requestTries[reqId] = tries + 1;
-            console.log(`[Proxy Auth] Authenticating proxy ${hostPortKey} (User: ${creds.username})`);
+            console.log(`[Proxy Auth] Authenticating proxy ${hostPortKey}`);
+            logger.info('auth', 'Аутентификация прокси', `Отправка учётных данных для ${hostPortKey}`);
 
             const resp = {
               authCredentials: {

@@ -387,16 +387,16 @@ export function cookPac(pacData, pacMods) {
   const ifExceptions = Object.keys(finalExceptions).length;
   if (ifExceptions) {
     const exactMap = {};
-    const wildcards = [];
+    const wildMap = {};
 
     for (const key in finalExceptions) {
       if (Object.prototype.hasOwnProperty.call(finalExceptions, key)) {
         const isProxy = Boolean(finalExceptions[key]);
         const clean = key.toLowerCase().trim();
         if (clean.startsWith('*.')) {
-          wildcards.push({ domain: clean.slice(2), isProxy });
+          wildMap[clean.slice(2)] = isProxy ? 1 : 0;
         } else if (clean.startsWith('.')) {
-          wildcards.push({ domain: clean.slice(1), isProxy });
+          wildMap[clean.slice(1)] = isProxy ? 1 : 0;
         } else {
           exactMap[clean] = isProxy ? 1 : 0;
         }
@@ -404,40 +404,27 @@ export function cookPac(pacData, pacMods) {
     }
 
     generatedPac += `
-    /* EXCEPTIONS - Instant O(1) Hash Map + Wildcard checks */
+    /* EXCEPTIONS - Instant O(1) Hash Map Hierarchy */
     const excExact = ${JSON.stringify(exactMap)};
-    const excWild = ${JSON.stringify(wildcards)};
+    const excWild = ${JSON.stringify(wildMap)};
 
-    // 1. Direct match or parent domain suffix lookup in Hash Map O(1)
+    // 1. Direct hostname exact or wildcard match
     if (excExact[host] !== undefined) {
-      if (excExact[host] === 1) {
-        return getCustomProxiedDestination(url, host);
-      } else {
-        return "DIRECT";
-      }
+      return excExact[host] === 1 ? getCustomProxiedDestination(url, host) : "DIRECT";
+    }
+    if (excWild[host] !== undefined) {
+      return excWild[host] === 1 ? getCustomProxiedDestination(url, host) : "DIRECT";
     }
 
+    // 2. Parent domain suffix lookups (O(k) where k is domain depth)
     const hostParts = host.split('.');
     for (let pIdx = 1; pIdx < hostParts.length; pIdx++) {
       const parentDomain = hostParts.slice(pIdx).join('.');
-      if (excExact[parentDomain] !== undefined) {
-        if (excExact[parentDomain] === 1) {
-          return getCustomProxiedDestination(url, host);
-        } else {
-          return "DIRECT";
-        }
+      if (excWild[parentDomain] !== undefined) {
+        return excWild[parentDomain] === 1 ? getCustomProxiedDestination(url, host) : "DIRECT";
       }
-    }
-
-    // 2. Wildcard matches (if any)
-    for (let wIdx = 0; wIdx < excWild.length; wIdx++) {
-      const wRule = excWild[wIdx];
-      if (dotHost.endsWith('.' + wRule.domain)) {
-        if (wRule.isProxy) {
-          return getCustomProxiedDestination(url, host);
-        } else {
-          return "DIRECT";
-        }
+      if (excExact[parentDomain] !== undefined) {
+        return excExact[parentDomain] === 1 ? getCustomProxiedDestination(url, host) : "DIRECT";
       }
     }
 `;

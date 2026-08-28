@@ -254,6 +254,59 @@ async function handleClearList() {
   }
 }
 
+function parseAndValidateDomainLines(lines) {
+  const validSet = new Set();
+  let skippedCount = 0;
+
+  // Regex validators for domains (ASCII and Cyrillic IDN) and IPs
+  const asciiDomainRegex = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}$/i;
+  const cyrillicDomainRegex = /^(?:[\u0400-\u04FF0-9](?:[\u0400-\u04FF0-9-]{0,61}[\u0400-\u04FF0-9])?\.)+[\u0400-\u04FF0-9-]{2,63}$/i;
+  const ipv4Regex = /^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/;
+
+  for (let rawLine of lines) {
+    // Strip standard and unicode whitespace (e.g. non-breaking space, zero-width space, full-width space)
+    let line = rawLine.replace(/^[\s\u00A0\u200B-\u200D\uFEFF\u3000]+|[\s\u00A0\u200B-\u200D\uFEFF\u3000]+$/g, '');
+
+    // Skip empty lines
+    if (!line) continue;
+
+    // Skip full comment lines (#, //, ;, !, --)
+    if (/^(?:#|\/\/|;|!|--)/.test(line)) continue;
+
+    // Strip inline comments
+    line = line.replace(/\s+(?:#|\/\/|;|!).*$/, '').trim();
+    if (!line) continue;
+
+    // Strip URL protocols, user auth, paths, query, ports
+    line = line.replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//, '').replace(/^[^@\s]+@/, '').replace(/[/?#].*$/, '').replace(/:\d+$/, '');
+
+    // Check for wildcard prefix
+    const isWildcard = line.startsWith('*.') || (line.startsWith('*') && line.length > 1);
+    let baseHost = line.replace(/^\*\.?/, '').replace(/^\.+/, '').trim().toLowerCase();
+
+    // Strip trailing dot
+    if (baseHost.endsWith('.')) baseHost = baseHost.slice(0, -1);
+
+    // Disallow invalid characters or length
+    if (!baseHost || baseHost.length > 253 || baseHost.includes('..') || /[\s<>"'{}[\]\\^~`]/.test(baseHost)) {
+      skippedCount++;
+      continue;
+    }
+
+    // Validate domain syntax
+    const isValid = asciiDomainRegex.test(baseHost) || cyrillicDomainRegex.test(baseHost) || ipv4Regex.test(baseHost);
+
+    if (isValid) {
+      const finalDomain = isWildcard ? `*.${baseHost}` : baseHost;
+      validSet.add(finalDomain);
+    } else {
+      skippedCount++;
+    }
+  }
+
+  return { validDomains: Array.from(validSet), skippedCount };
+}
+
 /**
  * Safely parse and validate domains from an uploaded File object.
  */
@@ -326,78 +379,10 @@ async function parseAndValidateDomainFile(file) {
     throw new Error('Файл содержит нечитаемые бинарные данные. Поддерживаются только текстовые файлы (.txt) в кодировке UTF-8.');
   }
 
-  // 6. Tokenize line by line (support CRLF, LF, CR)
+  // 6. Tokenize line by line (support CRLF, LF, CR) and validate
   const allLines = rawText.split(/\r?\n|\r/);
-  // Cap at 100,000 lines to prevent UI freezing
   const lines = allLines.slice(0, 100000);
-
-  const validSet = new Set();
-  let skippedCount = 0;
-
-  // Regex validators for domains (ASCII and Cyrillic IDN) and IPs
-  const asciiDomainRegex = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}$/i;
-  const cyrillicDomainRegex = /^(?:[\u0400-\u04FF0-9](?:[\u0400-\u04FF0-9-]{0,61}[\u0400-\u04FF0-9])?\.)+[\u0400-\u04FF0-9-]{2,63}$/i;
-  const ipv4Regex = /^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/;
-
-  for (let rawLine of lines) {
-    // Strip standard and unicode whitespace (e.g. non-breaking space, zero-width space, full-width space)
-    let line = rawLine.replace(/^[\s\u00A0\u200B-\u200D\uFEFF\u3000]+|[\s\u00A0\u200B-\u200D\uFEFF\u3000]+$/g, '');
-
-    // Skip empty lines
-    if (!line) {
-      continue;
-    }
-
-    // Skip full comment lines (#, //, ;, !, --)
-    if (/^(?:#|\/\/|;|!|--)/.test(line)) {
-      continue;
-    }
-
-    // Strip inline comments (e.g., "example.com # note" or "example.com // comment")
-    line = line.replace(/\s+(?:#|\/\/|;|!).*$/, '').trim();
-    if (!line) {
-      continue;
-    }
-
-    // Strip URL protocols (http://, https://, ftp://, ws://, wss://, etc.)
-    line = line.replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//, '');
-
-    // Strip user auth (user:pass@)
-    line = line.replace(/^[^@\s]+@/, '');
-
-    // Strip paths, query parameters, hashes
-    line = line.replace(/[/?#].*$/, '');
-
-    // Strip ports (:8080)
-    line = line.replace(/:\d+$/, '');
-
-    // Check for wildcard prefix
-    const isWildcard = line.startsWith('*.') || (line.startsWith('*') && line.length > 1);
-    let baseHost = line.replace(/^\*\.?/, '').replace(/^\.+/, '').trim().toLowerCase();
-
-    // Strip trailing dot if any (e.g., example.com.)
-    if (baseHost.endsWith('.')) {
-      baseHost = baseHost.slice(0, -1);
-    }
-
-    // Disallow invalid characters or length
-    if (!baseHost || baseHost.length > 253 || baseHost.includes('..') || /[\s<>"'{}[\]\\^~`]/.test(baseHost)) {
-      skippedCount++;
-      continue;
-    }
-
-    // Validate domain syntax
-    const isValid = asciiDomainRegex.test(baseHost) || cyrillicDomainRegex.test(baseHost) || ipv4Regex.test(baseHost);
-
-    if (isValid) {
-      const finalDomain = isWildcard ? `*.${baseHost}` : baseHost;
-      validSet.add(finalDomain);
-    } else {
-      skippedCount++;
-    }
-  }
-
-  const validDomains = Array.from(validSet);
+  const { validDomains, skippedCount } = parseAndValidateDomainLines(lines);
 
   if (validDomains.length === 0) {
     throw new Error(`В файле не найдено ни одного корректного доменного имени (пропущено некорректных строк: ${skippedCount}).`);
@@ -493,20 +478,28 @@ function saveRawText() {
   const text = el.rawTextEditor.value;
   const sections = text
     .trim()
-    .replace(/#.*/g, '')
     .split(/=+/g)
     .map((s) => s.trim().split(/(?:\s*\r?\n\s*)+/g).filter(Boolean));
 
-  const [incList = [], excList = [], whiteList = []] = sections;
+  const [incRaw = [], excRaw = [], whiteRaw = []] = sections;
+  const incRes = parseAndValidateDomainLines(incRaw);
+  const excRes = parseAndValidateDomainLines(excRaw);
+  const whiteRes = parseAndValidateDomainLines(whiteRaw);
+
+  const totalSkipped = incRes.skippedCount + excRes.skippedCount + whiteRes.skippedCount;
+
   const newExceptions = {};
-  incList.forEach((host) => (newExceptions[host] = true));
-  excList.forEach((host) => (newExceptions[host] = false));
+  incRes.validDomains.forEach((host) => (newExceptions[host] = true));
+  excRes.validDomains.forEach((host) => (newExceptions[host] = false));
 
   state.exceptions = newExceptions;
-  state.whitelist = whiteList;
+  state.whitelist = whiteRes.validDomains;
 
   saveAllData();
   toggleMode();
+
+  const skipMsg = totalSkipped > 0 ? ` (пропущено некорректных строк: ${totalSkipped})` : '';
+  showToast(`✓ Настройки сохранены!${skipMsg}`, 3500);
 }
 
 function setupEvents() {

@@ -72,3 +72,89 @@ function FindProxyForURL(url, host) {
     expect(sandbox.FindProxyForURL('https://example.com/', 'example.com')).to.equal('DIRECT');
   });
 });
+
+describe('Proxy Health Check: Concurrency & State Race Protection (P1-1)', () => {
+  let appliedProxyConfigs = [];
+  let originalFetch;
+
+  before(() => {
+    originalFetch = globalThis.fetch;
+    if (!globalThis.chrome) globalThis.chrome = {};
+    if (!globalThis.chrome.runtime) globalThis.chrome.runtime = { lastError: null };
+    if (!globalThis.chrome.storage) {
+      globalThis.chrome.storage = {
+        local: {
+          get: (k, cb) => cb({}),
+          set: (i, cb) => cb && cb(),
+          remove: (k, cb) => cb && cb(),
+        },
+      };
+    }
+    globalThis.chrome.proxy = {
+      settings: {
+        set: (opts, cb) => {
+          appliedProxyConfigs.push(opts.value);
+          if (cb) cb();
+        },
+        clear: (opts, cb) => {
+          appliedProxyConfigs.push({ mode: 'direct' });
+          if (cb) cb();
+        },
+        get: (opts, cb) => {
+          cb && cb({ levelOfControl: 'controlled_by_this_extension' });
+        },
+      },
+    };
+    globalThis.chrome.action = {
+      setIcon: () => {},
+      setTitle: () => {},
+      setBadgeText: () => {},
+      setBadgeBackgroundColor: () => {},
+    };
+  });
+
+  after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  beforeEach(() => {
+    appliedProxyConfigs = [];
+  });
+
+  it('should not overwrite newer PAC configuration if provider changed during health check', async () => {
+    const { pacSync } = await import('../src/extension-common/core/pac-sync.js');
+    const { checkProxyHealth } = await import('../src/extension-common/core/proxy-checker.js');
+
+    // 1. Initial state: Antizapret
+    pacSync.resetRuntimeState();
+    pacSync.currentPacProviderKey = 'Антизапрет';
+    pacSync.cookedPacData = 'function FindProxyForURL(url, host) { return "PROXY antizapret:443"; }';
+    pacSync.rawPacData = pacSync.cookedPacData;
+    pacSync.revision = 1;
+
+    // 2. Mock fetch: during probe fetch, user changes provider to Anticensority
+    globalThis.fetch = async () => {
+      // Simulate user switching provider concurrently while probe is running
+      pacSync.currentPacProviderKey = 'Антицензорити';
+      pacSync.cookedPacData = 'function FindProxyForURL(url, host) { return "PROXY anticensority:443"; }';
+      pacSync.rawPacData = pacSync.cookedPacData;
+      pacSync.revision = 2;
+      appliedProxyConfigs.push({
+        mode: 'pac_script',
+        pacScript: { data: pacSync.cookedPacData, mandatory: false },
+      });
+
+      return { status: 200 };
+    };
+
+    // 3. Run health check
+    const res = await checkProxyHealth('HTTP 1.2.3.4:8080');
+    expect(res.ok).to.be.true;
+
+    // 4. Verify that final applied config is Anticensority and NOT the old Antizapret or probe PAC
+    const lastConfig = appliedProxyConfigs[appliedProxyConfigs.length - 1];
+    expect(lastConfig.pacScript.data).to.include('anticensority:443');
+    expect(lastConfig.pacScript.data).to.not.include('1.2.3.4:8080');
+    expect(pacSync.currentPacProviderKey).to.equal('Антицензорити');
+  });
+});

@@ -1,8 +1,9 @@
 'use strict';
 
-import { clarify } from './errors-lib.js';
+import { clarify, Warning } from './errors-lib.js';
 
 const checkCon = 'Что-то не так с сетью, проверьте соединение.';
+const DEFAULT_MAX_BYTES = 2 * 1024 * 1024; // 2 MB
 
 export const httpLib = {
   async ifModifiedSince(url, lastModified) {
@@ -31,7 +32,7 @@ export const httpLib = {
     }
   },
 
-  async get(url, { timeoutMs = 15000 } = {}) {
+  async get(url, { timeoutMs = 15000, maxBytes = DEFAULT_MAX_BYTES } = {}) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -49,9 +50,57 @@ export const httpLib = {
           `Получен ответ с неудачным HTTP-кодом ${status}.`
         );
       }
-      return await res.text();
+
+      const contentLength = res.headers && res.headers.get && res.headers.get('content-length');
+      if (contentLength && Number(contentLength) > maxBytes) {
+        throw clarify(
+          new Error('Response body too large'),
+          'Размер ответа превышает допустимый лимит (2 МБ).'
+        );
+      }
+
+      if (res.body && typeof res.body.getReader === 'function') {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let receivedBytes = 0;
+        let resultText = '';
+
+        let reading = true;
+        while (reading) {
+          const { done, value } = await reader.read();
+          if (done) {
+            reading = false;
+            break;
+          }
+          receivedBytes += value.length;
+          if (receivedBytes > maxBytes) {
+            try {
+              await reader.cancel();
+            } catch { }
+            throw clarify(
+              new Error('Response body too large'),
+              'Размер ответа превышает допустимый лимит (2 МБ).'
+            );
+          }
+          resultText += decoder.decode(value, { stream: true });
+        }
+        resultText += decoder.decode();
+        return resultText;
+      }
+
+      const text = await res.text();
+      if (text && text.length > maxBytes) {
+        throw clarify(
+          new Error('Response body too large'),
+          'Размер ответа превышает допустимый лимит (2 МБ).'
+        );
+      }
+      return text;
     } catch (err) {
       clearTimeout(timer);
+      if (err instanceof Warning) {
+        throw err;
+      }
       if (err.name === 'AbortError') {
         throw clarify(err, 'Таймаут соединения с сервером.');
       }

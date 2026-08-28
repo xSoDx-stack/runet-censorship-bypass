@@ -9,7 +9,7 @@ const MENU_ITEMS = [
   {
     id: 'web-archive',
     title: 'Из архива Wayback Machine (archive.org)',
-    getUrl: (url) => `https://web.archive.org/web/*/${url}`,
+    getUrl: (url) => `https://web.archive.org/web/*/${encodeURI((url || '').trim())}`,
   },
   {
     id: 'rublacklist-check',

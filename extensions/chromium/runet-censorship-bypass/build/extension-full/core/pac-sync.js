@@ -288,6 +288,7 @@ class PacSyncManager {
     this.cookedPacData = candidateCooked;
     try {
       ipToHost.updateFromPac(candidateRawData);
+      await ipToHost.persistData();
     } catch {
       // Non-critical
     }

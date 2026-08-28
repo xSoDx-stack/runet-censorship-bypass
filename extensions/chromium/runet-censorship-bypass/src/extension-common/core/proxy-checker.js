@@ -132,6 +132,7 @@ async function executeSingleProxyHealthCheck(proxyString) {
     },
   };
 
+  const revisionBefore = pacSync.getRevision();
   const startTime = Date.now();
   let result = null;
 
@@ -198,11 +199,13 @@ async function executeSingleProxyHealthCheck(proxyString) {
     // 5. Guaranteed cleanup of temporary credentials in memory
     unregisterTemporaryCredentials(parsed.hostname, parsed.port);
 
-    // 6. Restore active PAC safely: reapply current authoritative state to avoid stale snapshots
-    try {
-      await pacSync.reapplyCurrentPac();
-    } catch (restoreErr) {
-      console.warn('Failed to restore active PAC after health check:', restoreErr);
+    // 6. Restore active PAC safely: reapply current authoritative state if revision hasn't changed
+    if (pacSync.getRevision() === revisionBefore) {
+      try {
+        await pacSync.reapplyCurrentPac();
+      } catch (restoreErr) {
+        console.warn('Failed to restore active PAC after health check:', restoreErr);
+      }
     }
   }
 
