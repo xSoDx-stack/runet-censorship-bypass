@@ -5,12 +5,10 @@
  */
 export const storage = {
   async get(key, defaultValue = undefined) {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       chrome.storage.local.get(key, (items) => {
         if (chrome.runtime.lastError) {
-          console.warn('chrome.storage.local.get error:', chrome.runtime.lastError);
-          resolve(defaultValue);
-          return;
+          return reject(new Error(chrome.runtime.lastError.message));
         }
         if (key === null || key === undefined) {
           resolve(items || {});
@@ -23,7 +21,7 @@ export const storage = {
           }
           resolve(res);
         } else {
-          resolve(items || defaultValue);
+          resolve(items !== undefined ? items : defaultValue);
         }
       });
     });

@@ -45,8 +45,8 @@ export async function updateProxyCredentialsFromRaw(customProxyStringRaw = '') {
 
     for (const line of lines) {
       const parsed = utils.parseProxyScheme(line);
-      if (parsed.hostname && parsed.username) {
-        const port = parsed.port || (parsed.type.startsWith('SOCKS') ? '1080' : '443');
+      if (parsed && parsed.hostname && parsed.username && parsed.port) {
+        const port = parsed.port;
         const creds = {
           username: String(parsed.username),
           password: String(parsed.password || ''),
@@ -54,8 +54,8 @@ export async function updateProxyCredentialsFromRaw(customProxyStringRaw = '') {
 
         const aliases = getHostAliases(parsed.hostname);
         for (const alias of aliases) {
+          // Strictly store host:port scoped credentials
           newMap[`${alias}:${port}`] = creds;
-          newMap[alias] = creds;
         }
       }
     }
@@ -78,7 +78,6 @@ export function registerTemporaryCredentials(hostname, port, username, password)
   const aliases = getHostAliases(h);
   for (const alias of aliases) {
     temporaryCredentialsMap[`${alias}:${portStr}`] = creds;
-    temporaryCredentialsMap[alias] = creds;
   }
 }
 
@@ -93,40 +92,62 @@ export function unregisterTemporaryCredentials(hostname, port) {
   for (const alias of aliases) {
     if (portStr) {
       delete temporaryCredentialsMap[`${alias}:${portStr}`];
+    } else {
+      for (const k of Object.keys(temporaryCredentialsMap)) {
+        if (k.startsWith(`${alias}:`)) {
+          delete temporaryCredentialsMap[k];
+        }
+      }
     }
-    delete temporaryCredentialsMap[alias];
   }
 }
 
 function lookupInMap(map, hostStr, portStr) {
   if (!map || !hostStr) return null;
 
-  // 1. Direct host:port match
-  if (portStr && map[`${hostStr}:${portStr}`]) {
-    return map[`${hostStr}:${portStr}`];
-  }
-
-  // 2. Loopback aliases with port
-  if (isLoopbackHost(hostStr)) {
-    const loopbacks = ['localhost', '127.0.0.1', '::1', '[::1]', '0.0.0.0'];
-    if (portStr) {
+  // 1. If port is provided in challenge: STRICT canonical host:port lookup ONLY
+  if (portStr) {
+    if (map[`${hostStr}:${portStr}`]) {
+      return map[`${hostStr}:${portStr}`];
+    }
+    // Loopback aliases with exact same port
+    if (isLoopbackHost(hostStr)) {
+      const loopbacks = ['localhost', '127.0.0.1', '::1', '[::1]', '0.0.0.0'];
       for (const lb of loopbacks) {
         if (map[`${lb}:${portStr}`]) {
           return map[`${lb}:${portStr}`];
         }
       }
     }
-    // Loopback aliases host-only
-    for (const lb of loopbacks) {
-      if (map[lb]) {
-        return map[lb];
+    // Strict isolation: DO NOT fall back to another port or host-only if port was provided
+    return null;
+  }
+
+  // 2. If port was NOT provided in challenge: allow fallback only if there is exactly ONE entry for host
+  const candidateKeys = [];
+  const loopbacks = isLoopbackHost(hostStr)
+    ? ['localhost', '127.0.0.1', '::1', '[::1]', '0.0.0.0']
+    : [hostStr];
+
+  for (const lb of loopbacks) {
+    for (const key of Object.keys(map)) {
+      if (key.startsWith(`${lb}:`)) {
+        candidateKeys.push(key);
       }
     }
   }
 
-  // 3. Host only match
-  if (map[hostStr]) {
-    return map[hostStr];
+  if (candidateKeys.length === 0) return null;
+
+  // Check if all matched entries have the exact same credentials (unambiguous)
+  const firstCreds = map[candidateKeys[0]];
+  const allSame = candidateKeys.every((k) => {
+    const c = map[k];
+    return c && c.username === firstCreds.username && c.password === firstCreds.password;
+  });
+
+  if (allSame && firstCreds && firstCreds.username) {
+    return firstCreds;
   }
 
   return null;
@@ -134,7 +155,9 @@ function lookupInMap(map, hostStr, portStr) {
 
 export function findCredentials(host, port) {
   const hostStr = (host || '').toLowerCase().trim();
-  const portStr = port ? String(port).trim() : '';
+  const portStr = port !== undefined && port !== null && String(port).trim() !== ''
+    ? String(port).trim()
+    : '';
 
   if (!hostStr) return null;
 

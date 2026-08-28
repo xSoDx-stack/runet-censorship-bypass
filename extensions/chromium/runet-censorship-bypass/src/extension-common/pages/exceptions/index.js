@@ -152,10 +152,20 @@ function appendNextDomainChunk() {
   nextBatch.forEach((domain) => {
     const card = document.createElement('div');
     card.className = 'domain-card';
-    card.innerHTML = `
-      <span class="domain-name" title="${domain}">${domain}</span>
-      <button class="delete-domain-btn" title="Удалить" data-domain="${domain}">✕</button>
-    `;
+
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'domain-name';
+    nameSpan.title = domain;
+    nameSpan.textContent = domain;
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'delete-domain-btn';
+    delBtn.title = 'Удалить';
+    delBtn.dataset.domain = domain;
+    delBtn.textContent = '✕';
+
+    card.appendChild(nameSpan);
+    card.appendChild(delBtn);
     fragment.appendChild(card);
   });
 

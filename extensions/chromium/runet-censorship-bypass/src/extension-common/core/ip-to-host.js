@@ -56,12 +56,18 @@ class IpToHostManager {
     const cleanHost = String(host).trim();
     if (!cleanHost) return;
 
-    // P2.4: Strip port from host string before IPv4 check so 'ip:port' forms are handled correctly
-    // The full host string (e.g. '10.20.30.40:1080') is stored as the value; we key by bare IP
-    const ipCandidate = cleanHost.split(':')[0];
-    const ipv4Match = ipCandidate.match(/^(\d{1,3}\.){3}\d{1,3}$/);
-    if (ipv4Match) {
-      this.ipToHostMap[ipCandidate] = cleanHost;
+    // Safe IP extraction: handles bare IPs, host:port, [ipv6]:port and bare [ipv6]
+    let bareIp = cleanHost;
+    if (cleanHost.startsWith('[')) {
+      bareIp = cleanHost.replace(/^\[([^\]]+)\](?::\d+)?$/, '$1');
+    } else if (cleanHost.includes(':')) {
+      bareIp = cleanHost.split(':')[0];
+    }
+
+    const isIPv4 = /^(\d{1,3}\.){3}\d{1,3}$/.test(bareIp);
+    const isIPv6 = bareIp.includes(':') || bareIp === 'localhost';
+    if (isIPv4 || isIPv6) {
+      this.ipToHostMap[bareIp] = cleanHost;
     }
 
     if (Array.isArray(ips)) {

@@ -1,6 +1,6 @@
 # 🛡️ АнтиЧебурнет (Manifest V3)
 
-[![Version](https://img.shields.io/badge/version-2.2.16-blue.svg?style=flat-square)](./package.json)
+[![Version](https://img.shields.io/badge/version-2.2.18-blue.svg?style=flat-square)](./package.json)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-green.svg?style=flat-square)](./LICENSE)
 [![Manifest V3](https://img.shields.io/badge/Platform-Chromium%20MV3-orange.svg?style=flat-square)](https://developer.chrome.com/docs/extensions/mv3/intro/)
 [![Telemetry: None](https://img.shields.io/badge/Telemetry-None-success.svg?style=flat-square)](#-отсутствие-телеметрии-и-внешних-трекеров)
@@ -66,11 +66,17 @@
 
 1. Скачайте или клонируйте репозиторий:
    ```bash
-   git clone https://github.com/your-username/anticheburnet.git
+   git clone https://github.com/xSoDx-stack/runet-censorship-bypass.git
+   cd runet-censorship-bypass
    ```
-2. Откройте страницу расширений в браузере: `chrome://extensions/` (или `edge://extensions/`).
-3. Включите **«Режим разработчика»** (*Developer mode*) в правом верхнем углу.
-4. Нажмите **«Загрузить распакованное расширение»** (*Load unpacked*) и выберите папку:
+2. Установите зависимости и соберите проект (при сборке из исходного кода):
+   ```bash
+   npm install
+   npm run build
+   ```
+3. Откройте страницу расширений в браузере: `chrome://extensions/` (или `edge://extensions/`).
+4. Включите **«Режим разработчика»** (*Developer mode*) в правом верхнем углу.
+5. Нажмите **«Загрузить распакованное расширение»** (*Load unpacked*) и выберите папку:
    ```text
    runet-censorship-bypass/extensions/chromium/runet-censorship-bypass/build/extension-full
    ```

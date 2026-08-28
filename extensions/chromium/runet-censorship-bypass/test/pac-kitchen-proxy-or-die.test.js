@@ -165,4 +165,111 @@ function FindProxyForURL(url, host) {
     const resultInsecureOff = findProxySecureOff('https://insecure-blocked.example/', 'insecure-blocked.example');
     expect(resultInsecureOff).to.equal('DIRECT');
   });
+
+  describe('Browser-Level PAC mandatory setting (Task 1)', () => {
+    let appliedProxyConfigs = [];
+    let savedStorage = {};
+
+    beforeEach(() => {
+      appliedProxyConfigs = [];
+      savedStorage = {};
+      globalThis.chrome = {
+        runtime: { lastError: null },
+        action: {
+          setIcon: () => {},
+          setTitle: () => {},
+          setBadgeText: () => {},
+          setBadgeBackgroundColor: () => {},
+        },
+        proxy: {
+          settings: {
+            get: (opts, cb) => {
+              if (cb) {
+                cb({
+                  levelOfControl: 'controlled_by_this_extension',
+                  value: appliedProxyConfigs[appliedProxyConfigs.length - 1] || {},
+                });
+              }
+            },
+            set: (opts, cb) => {
+              appliedProxyConfigs.push(opts.value);
+              if (cb) cb();
+            },
+            clear: (opts, cb) => {
+              appliedProxyConfigs.push({ mode: 'direct' });
+              if (cb) cb();
+            },
+          },
+        },
+        storage: {
+          local: {
+            get: (key, cb) => {
+              if (typeof key === 'string') {
+                cb({ [key]: savedStorage[key] });
+              } else {
+                cb(Object.assign({}, savedStorage));
+              }
+            },
+            set: (items, cb) => {
+              Object.assign(savedStorage, items);
+              if (cb) cb();
+            },
+            remove: (keys, cb) => {
+              const kArr = Array.isArray(keys) ? keys : [keys];
+              kArr.forEach((k) => delete savedStorage[k]);
+              if (cb) cb();
+            },
+            clear: (cb) => {
+              savedStorage = {};
+              if (cb) cb();
+            },
+          },
+        },
+      };
+    });
+
+    it('1. Proxy Or Die OFF -> mandatory === false', async () => {
+      const { pacSync } = await import('../src/extension-common/core/pac-sync.js');
+      const { pacKitchen } = await import('../src/extension-common/core/pac-kitchen.js');
+
+      await pacKitchen.savePacMods({ ifProxyOrDie: false });
+      await pacSync.applyPacData('function FindProxyForURL(url, host) { return "DIRECT"; }');
+
+      const lastConfig = appliedProxyConfigs[appliedProxyConfigs.length - 1];
+      expect(lastConfig.mode).to.equal('pac_script');
+      expect(lastConfig.pacScript.mandatory).to.be.false;
+    });
+
+    it('2. Proxy Or Die ON -> mandatory === true', async () => {
+      const { pacSync } = await import('../src/extension-common/core/pac-sync.js');
+      const { pacKitchen } = await import('../src/extension-common/core/pac-kitchen.js');
+
+      await pacKitchen.savePacMods({ ifProxyOrDie: true });
+      await pacSync.applyPacData('function FindProxyForURL(url, host) { return "DIRECT"; }');
+
+      const lastConfig = appliedProxyConfigs[appliedProxyConfigs.length - 1];
+      expect(lastConfig.mode).to.equal('pac_script');
+      expect(lastConfig.pacScript.mandatory).to.be.true;
+    });
+
+    it('3. Changing ifProxyOrDie reapplies PAC with new mandatory value', async () => {
+      const { pacSync } = await import('../src/extension-common/core/pac-sync.js');
+      const { pacKitchen } = await import('../src/extension-common/core/pac-kitchen.js');
+
+      // Start with ON
+      await pacKitchen.savePacMods({ ifProxyOrDie: true });
+      await pacSync.applyPacData('function FindProxyForURL(url, host) { return "DIRECT"; }');
+      expect(appliedProxyConfigs[appliedProxyConfigs.length - 1].pacScript.mandatory).to.be.true;
+
+      // Toggle to OFF
+      await pacKitchen.savePacMods({ ifProxyOrDie: false });
+      await pacSync.reapplyCurrentPac();
+      expect(appliedProxyConfigs[appliedProxyConfigs.length - 1].pacScript.mandatory).to.be.false;
+
+      // Toggle back to ON
+      await pacKitchen.savePacMods({ ifProxyOrDie: true });
+      await pacSync.reapplyCurrentPac();
+      expect(appliedProxyConfigs[appliedProxyConfigs.length - 1].pacScript.mandatory).to.be.true;
+    });
+  });
 });

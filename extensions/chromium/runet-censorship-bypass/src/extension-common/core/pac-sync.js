@@ -241,12 +241,14 @@ class PacSyncManager {
     const pacMods = await pacKitchen.getPacMods();
     const candidateCooked = pacKitchen.cook(candidateRawData, pacMods);
 
+    const isProxyOrDie = pacMods && pacMods.ifProxyOrDie !== false;
+
     await new Promise((resolve, reject) => {
       const config = {
         mode: 'pac_script',
         pacScript: {
           data: candidateCooked,
-          mandatory: false,
+          mandatory: Boolean(isProxyOrDie),
         },
       };
 

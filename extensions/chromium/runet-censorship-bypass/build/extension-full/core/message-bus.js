@@ -9,6 +9,8 @@ import { httpLib } from './http-lib.js';
 import { checkProxyHealth } from './proxy-checker.js';
 import { logger } from './logger.js';
 import { formatErrorMessage } from './errors-lib.js';
+import { ipToHost } from './ip-to-host.js';
+import { initProxyAuth } from './proxy-auth.js';
 
 export function setupMessageBus() {
   if (chrome.runtime.onMessage.hasListeners && chrome.runtime.onMessage.hasListeners()) {
@@ -25,58 +27,50 @@ export function setupMessageBus() {
 
       switch (message.action) {
         case 'GET_STATE': {
-          // Ultra-fast cached sync state and cached mods (0ms)
           const syncState = pacSync.getState();
           const pacMods = await pacKitchen.getPacMods();
-          const defaultConfigs = getDefaultConfigs();
+          const configs = getDefaultConfigs();
+          const defaultConfigs = {};
+          for (const k in configs) {
+            defaultConfigs[k] = configs[k].dflt;
+          }
           const exceptionStats = pacKitchen.getCachedStats();
 
-          let currentSiteMatch = { matched: false };
-          if (message.currentDomain) {
-            currentSiteMatch = matchExceptionDomain(message.currentDomain, pacMods.exceptions);
+          let currentSiteMatch = null;
+          if (message.currentHost) {
+            currentSiteMatch = matchExceptionDomain(message.currentHost, pacMods.exceptions);
           }
-
-          // Return strictly lightweight settings payload (<1 KB) for popup window
-          const returnMods = {
-            ifProxyHttpsUrlsOnly: Boolean(pacMods.ifProxyHttpsUrlsOnly),
-            ifUseSecureProxiesOnly: Boolean(pacMods.ifUseSecureProxiesOnly),
-            ifProhibitDns: Boolean(pacMods.ifProhibitDns),
-            ifProxyOrDie: pacMods.ifProxyOrDie !== false,
-            ifUsePacScriptProxies: pacMods.ifUsePacScriptProxies !== false,
-            ifUseLocalTor: Boolean(pacMods.ifUseLocalTor),
-            ifUseLocalWarp: Boolean(pacMods.ifUseLocalWarp),
-            ifMindExceptions: pacMods.ifMindExceptions !== false,
-            ifMindWhitelist: Boolean(pacMods.ifMindWhitelist),
-            ifUseOwnProxiesOnlyForOwnSites: Boolean(pacMods.ifUseOwnProxiesOnlyForOwnSites),
-            customProxyStringRaw: pacMods.customProxyStringRaw || '',
-            ifProxyMoreDomains: Boolean(pacMods.ifProxyMoreDomains),
-            replaceDirectWith: pacMods.replaceDirectWith || '',
-          };
-
-          if (message.includeExceptions) {
-            returnMods.exceptions = pacMods.exceptions || {};
-            returnMods.whitelist = pacMods.whitelist || [];
-          }
-
-          // Non-blocking background control state refresh
-          pacSync.updateControlState().catch(() => {});
 
           return {
             success: true,
             data: {
               syncState,
-              pacMods: returnMods,
-              exceptionStats,
-              currentSiteMatch,
+              pacMods: {
+                ifProxyHttpsUrlsOnly: Boolean(pacMods.ifProxyHttpsUrlsOnly),
+                ifUseSecureProxiesOnly: Boolean(pacMods.ifUseSecureProxiesOnly),
+                ifProhibitDns: Boolean(pacMods.ifProhibitDns),
+                ifProxyOrDie: pacMods.ifProxyOrDie !== false,
+                ifUsePacScriptProxies: pacMods.ifUsePacScriptProxies !== false,
+                ifUseLocalTor: Boolean(pacMods.ifUseLocalTor),
+                ifUseLocalWarp: Boolean(pacMods.ifUseLocalWarp),
+                ifMindExceptions: pacMods.ifMindExceptions !== false,
+                ifMindWhitelist: Boolean(pacMods.ifMindWhitelist),
+                ifUseOwnProxiesOnlyForOwnSites: Boolean(pacMods.ifUseOwnProxiesOnlyForOwnSites),
+                customProxyStringRaw: pacMods.customProxyStringRaw || '',
+                ifProxyMoreDomains: Boolean(pacMods.ifProxyMoreDomains),
+                replaceDirectWith: pacMods.replaceDirectWith || '',
+              },
               defaultConfigs,
               notifications: errorHandlers.notificationsEnabled,
               lastErrors: errorHandlers.getLastErrors(),
               version: chrome.runtime.getManifest().version,
+              exceptionStats,
+              currentSiteMatch,
             },
           };
         }
 
-        case 'GET_FULL_EXCEPTIONS': {
+        case 'GET_EXCEPTIONS': {
           const pacMods = await pacKitchen.getPacMods();
           return {
             success: true,
@@ -88,40 +82,40 @@ export function setupMessageBus() {
         }
 
         case 'SET_SINGLE_EXCEPTION': {
-          const pacMods = await pacKitchen.getPacMods();
-          const exceptions = Object.assign({}, pacMods.exceptions || {});
-          if (message.isProxy === null || message.isProxy === undefined) {
-            delete exceptions[message.domain];
-          } else {
-            exceptions[message.domain] = Boolean(message.isProxy);
-          }
-          const updatedMods = Object.assign({}, pacMods, { exceptions });
-          await pacKitchen.savePacMods(updatedMods);
+          let updatedExceptions = {};
+          await pacKitchen.updatePacMods((current) => {
+            const exceptions = Object.assign({}, current.exceptions || {});
+            if (message.isProxy === null || message.isProxy === undefined) {
+              delete exceptions[message.domain];
+            } else {
+              exceptions[message.domain] = Boolean(message.isProxy);
+            }
+            updatedExceptions = exceptions;
+            return Object.assign({}, current, { exceptions });
+          });
           await pacSync.reapplyCurrentPac();
           const exceptionStats = pacKitchen.getCachedStats();
-          const currentSiteMatch = matchExceptionDomain(message.domain, exceptions);
+          const currentSiteMatch = matchExceptionDomain(message.domain, updatedExceptions);
           return { success: true, data: { exceptionStats, currentSiteMatch } };
         }
 
         case 'IMPORT_EXCEPTIONS_BATCH': {
-          const pacMods = await pacKitchen.getPacMods();
-          const exceptions = Object.assign({}, pacMods.exceptions || {});
-          const whitelist = [...(pacMods.whitelist || [])];
           const domains = message.domains || [];
           const target = message.target || 'excluded';
-
-          if (target === 'included') {
-            domains.forEach((d) => (exceptions[d] = true));
-          } else if (target === 'excluded') {
-            domains.forEach((d) => (exceptions[d] = false));
-          } else if (target === 'whitelist') {
-            domains.forEach((d) => {
-              if (!whitelist.includes(d)) whitelist.push(d);
-            });
-          }
-
-          const updatedMods = Object.assign({}, pacMods, { exceptions, whitelist });
-          await pacKitchen.savePacMods(updatedMods);
+          await pacKitchen.updatePacMods((current) => {
+            const exceptions = Object.assign({}, current.exceptions || {});
+            const whitelist = [...(current.whitelist || [])];
+            if (target === 'included') {
+              domains.forEach((d) => (exceptions[d] = true));
+            } else if (target === 'excluded') {
+              domains.forEach((d) => (exceptions[d] = false));
+            } else if (target === 'whitelist') {
+              domains.forEach((d) => {
+                if (!whitelist.includes(d)) whitelist.push(d);
+              });
+            }
+            return Object.assign({}, current, { exceptions, whitelist });
+          });
           await pacSync.reapplyCurrentPac();
           const exceptionStats = pacKitchen.getCachedStats();
           return { success: true, data: { count: domains.length, exceptionStats } };
@@ -129,27 +123,25 @@ export function setupMessageBus() {
 
         case 'CLEAR_EXCEPTIONS_CATEGORY': {
           const target = message.target || 'included';
-          const pacMods = await pacKitchen.getPacMods();
-          const exceptions = Object.assign({}, pacMods.exceptions || {});
-          let whitelist = [...(pacMods.whitelist || [])];
-
-          if (target === 'included') {
-            for (const k in exceptions) {
-              if (exceptions[k] === true) delete exceptions[k];
+          await pacKitchen.updatePacMods((current) => {
+            const exceptions = Object.assign({}, current.exceptions || {});
+            let whitelist = [...(current.whitelist || [])];
+            if (target === 'included') {
+              for (const k in exceptions) {
+                if (exceptions[k] === true) delete exceptions[k];
+              }
+            } else if (target === 'excluded') {
+              for (const k in exceptions) {
+                if (exceptions[k] === false) delete exceptions[k];
+              }
+            } else if (target === 'whitelist') {
+              whitelist = [];
+            } else if (target === 'all') {
+              for (const k in exceptions) delete exceptions[k];
+              whitelist = [];
             }
-          } else if (target === 'excluded') {
-            for (const k in exceptions) {
-              if (exceptions[k] === false) delete exceptions[k];
-            }
-          } else if (target === 'whitelist') {
-            whitelist = [];
-          } else if (target === 'all') {
-            for (const k in exceptions) delete exceptions[k];
-            whitelist = [];
-          }
-
-          const updatedMods = Object.assign({}, pacMods, { exceptions, whitelist });
-          await pacKitchen.savePacMods(updatedMods);
+            return Object.assign({}, current, { exceptions, whitelist });
+          });
           await pacSync.reapplyCurrentPac();
           const exceptionStats = pacKitchen.getCachedStats();
           return { success: true, data: { exceptionStats } };
@@ -180,9 +172,9 @@ export function setupMessageBus() {
         }
 
         case 'SAVE_MODS': {
-          const currentMods = await pacKitchen.getPacMods();
-          const mergedMods = Object.assign({}, currentMods, message.mods);
-          const parsedMods = await pacKitchen.savePacMods(mergedMods);
+          const parsedMods = await pacKitchen.updatePacMods((current) => {
+            return Object.assign({}, current, message.mods);
+          });
           await pacSync.reapplyCurrentPac();
 
           const returnMods = {
@@ -286,8 +278,12 @@ export function setupMessageBus() {
 
         case 'RESET_SETTINGS': {
           await storage.clear();
+          pacKitchen.invalidateCache();
+          await initProxyAuth();
+          await ipToHost.init();
           await pacSync.clearPac();
           await pacSync.installPac('Антизапрет');
+          appState.reset();
           return { success: true };
         }
 

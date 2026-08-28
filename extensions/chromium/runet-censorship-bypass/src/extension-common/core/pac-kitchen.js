@@ -512,6 +512,41 @@ export function getExceptionStats(exceptions = {}, whitelist = []) {
   return calculateExceptionStats(exceptions, whitelist);
 }
 
+let _mutationQueue = Promise.resolve();
+
+/**
+ * P1-2: Serialized mutation queue for PAC settings.
+ * Ensures concurrent modifications (UI toggles, imports, single exception adds)
+ * execute strictly sequentially without lost updates or race conditions.
+ *
+ * @param {(currentRawMods: object) => (object | Promise<object>)} mutator
+ * @returns {Promise<object>}
+ */
+export function updatePacMods(mutator) {
+  if (typeof mutator !== 'function') {
+    return Promise.reject(new TypeError('mutator must be a function'));
+  }
+
+  const run = async () => {
+    let currentRaw = _cachedRawMods;
+    if (!currentRaw) {
+      currentRaw = await storage.get(MODS_KEY, {});
+      _cachedRawMods = currentRaw;
+    }
+    // Deep clone state to prevent mutators from mutating shared cache directly
+    const cloned = JSON.parse(JSON.stringify(currentRaw || {}));
+    const mutated = await mutator(cloned);
+    if (!mutated || typeof mutated !== 'object') {
+      throw new Error('mutator must return an object');
+    }
+    return pacKitchen.savePacMods(mutated);
+  };
+
+  const next = _mutationQueue.then(run, run);
+  _mutationQueue = next.catch(() => {});
+  return next;
+}
+
 export const pacKitchen = {
   async getPacMods() {
     if (_cachedParsedMods) {
@@ -534,21 +569,42 @@ export const pacKitchen = {
     return _cachedParsedMods;
   },
 
+  async getRawPacMods() {
+    if (_cachedRawMods) {
+      return _cachedRawMods;
+    }
+    const rawMods = await storage.get(MODS_KEY, {});
+    _cachedRawMods = rawMods;
+    return rawMods;
+  },
+
+  /**
+   * P1-3: Persist-first savePacMods.
+   * Validates input, persists to storage, and ONLY updates RAM cache if storage write succeeds.
+   */
   async savePacMods(newMods) {
     const [err, parsedMods] = createPacModifiers(newMods);
     if (err) {
       throw err;
     }
-    _cachedRawMods = newMods;
-    _cachedParsedMods = parsedMods;
-    _cachedStats = calculateExceptionStats(newMods.exceptions, newMods.whitelist);
+    const newStats = calculateExceptionStats(newMods.exceptions, newMods.whitelist);
+
+    // 1. Persist to storage and credentials map first
     await Promise.all([
       updateProxyCredentialsFromRaw(newMods.customProxyStringRaw || ''),
       storage.set(MODS_KEY, newMods),
-      storage.set('pac-exception-stats', _cachedStats),
+      storage.set('pac-exception-stats', newStats),
     ]);
+
+    // 2. Only on success, publish to in-memory cache
+    _cachedRawMods = newMods;
+    _cachedParsedMods = parsedMods;
+    _cachedStats = newStats;
+
     return parsedMods;
   },
+
+  updatePacMods,
 
   getCachedStats() {
     if (_cachedStats) return _cachedStats;

@@ -177,25 +177,10 @@ function showToast(text, duration = 2400) {
   }, duration);
 }
 
-// Known second-level multi-part TLD suffixes
-const MULTI_PART_TLDS = new Set([
-  'co.uk', 'org.uk', 'gov.uk', 'ac.uk', 'me.uk',
-  'com.ru', 'net.ru', 'org.ru', 'pp.ru', 'spb.ru', 'msk.ru', 'nov.ru', 'sochi.ru',
-  'com.ua', 'org.ua', 'net.ua', 'edu.ua', 'gov.ua', 'in.ua',
-  'com.by', 'gov.by', 'edu.by',
-  'com.kz', 'org.kz', 'net.kz',
-  'com.tr', 'edu.tr', 'gov.tr',
-  'co.il', 'org.il', 'net.il',
-  'co.jp', 'ne.jp', 'or.jp',
-  'com.br', 'net.br', 'org.br',
-  'com.au', 'net.au', 'org.au', 'edu.au',
-  'co.nz', 'net.nz', 'org.nz',
-  'co.za', 'org.za', 'net.za',
-]);
-
 /**
- * Extract root/base domain from a hostname (e.g. sub.example.com -> example.com, static.site.co.uk -> site.co.uk)
- * Ensures adding this domain automatically covers the main site and all its subdomains.
+ * Extract root/base domain from a hostname using Public Suffix List (tldts)
+ * (e.g. sub.example.com -> example.com, static.site.co.uk -> site.co.uk).
+ * Safely falls back to full host for IP addresses, localhost, or unknown suffixes.
  */
 function getRootDomain(hostname) {
   if (!hostname || typeof hostname !== 'string') return '';
@@ -204,19 +189,18 @@ function getRootDomain(hostname) {
   if (host.startsWith('www.')) {
     host = host.slice(4);
   }
-  const parts = host.split('.');
-  if (parts.length <= 2) {
-    return host;
-  }
-  // Check multi-part TLD (e.g. site.co.uk, domain.org.ru)
-  const lastTwo = parts.slice(-2).join('.');
-  if (MULTI_PART_TLDS.has(lastTwo)) {
-    if (parts.length >= 3) {
-      return parts.slice(-3).join('.');
+  if (!host) return '';
+
+  const tldtsLib = (typeof window !== 'undefined' && window.tldts) || (typeof globalThis !== 'undefined' && globalThis.tldts) || null;
+  if (tldtsLib && tldtsLib.getDomain) {
+    try {
+      const domain = tldtsLib.getDomain(host, { allowPrivateDomains: true });
+      if (domain) return domain;
+    } catch {
+      // fallback
     }
-    return host;
   }
-  return parts.slice(-2).join('.');
+  return host;
 }
 
 /**
@@ -694,37 +678,61 @@ function renderCustomProxiesList() {
 
   list.forEach((item) => {
     const health = appState.proxyHealthMap[item.raw] || {};
-    let statusHtml = '';
-
-    if (health.checking) {
-      statusHtml = `<span class="proxy-status-tag checking">🔄 Проверка</span>`;
-    } else if (health.ok === true) {
-      statusHtml = `<span class="proxy-status-tag online" title="Задержка: ${health.latency} мс">🟢 ${health.latency}мс</span>`;
-    } else if (health.ok === false) {
-      statusHtml = `<span class="proxy-status-tag offline" title="${escapeHtml(health.error || 'Недоступен')}">🔴 Недоступен</span>`;
-    } else {
-      statusHtml = `<span class="proxy-status-tag checking">❓ Не проверен</span>`;
-    }
 
     const itemEl = document.createElement('div');
     itemEl.className = 'proxy-item';
-    // P1.4: Use escapeHtml for all user-supplied data inserted via innerHTML
-    // P1.5: data-raw and data-index attributes removed — click handlers use closure (item) directly
-    itemEl.innerHTML = `
-      <div style="display: flex; align-items: center; overflow: hidden; flex: 1;">
-        <span class="proxy-badge">${escapeHtml(item.type)}</span>
-        <span class="proxy-addr" title="${escapeHtml(item.address)}">${escapeHtml(item.address)}</span>
-        ${item.hasAuth ? `<span class="proxy-auth-tag" title="Логин: ${escapeHtml(item.user)}">🔒</span>` : ''}
-        ${statusHtml}
-      </div>
-      <div class="proxy-actions">
-        <button class="icon-btn recheck-btn" title="Проверить доступность">🔄</button>
-        <button class="icon-btn delete delete-btn" title="Удалить">✕</button>
-      </div>
-    `;
 
-    // Recheck button — item captured via closure
-    itemEl.querySelector('.recheck-btn').addEventListener('click', async () => {
+    const infoDiv = document.createElement('div');
+    infoDiv.style.display = 'flex';
+    infoDiv.style.alignItems = 'center';
+    infoDiv.style.overflow = 'hidden';
+    infoDiv.style.flex = '1';
+
+    const badgeSpan = document.createElement('span');
+    badgeSpan.className = 'proxy-badge';
+    badgeSpan.textContent = item.type;
+    infoDiv.appendChild(badgeSpan);
+
+    const addrSpan = document.createElement('span');
+    addrSpan.className = 'proxy-addr';
+    addrSpan.title = item.address;
+    addrSpan.textContent = item.address;
+    infoDiv.appendChild(addrSpan);
+
+    if (item.hasAuth) {
+      const authSpan = document.createElement('span');
+      authSpan.className = 'proxy-auth-tag';
+      authSpan.title = item.user ? `Логин: ${item.user}` : 'Авторизация';
+      authSpan.textContent = '🔒';
+      infoDiv.appendChild(authSpan);
+    }
+
+    const statusSpan = document.createElement('span');
+    if (health.checking) {
+      statusSpan.className = 'proxy-status-tag checking';
+      statusSpan.textContent = '🔄 Проверка';
+    } else if (health.ok === true) {
+      statusSpan.className = 'proxy-status-tag online';
+      statusSpan.title = `Задержка: ${health.latency} мс`;
+      statusSpan.textContent = `🟢 ${health.latency}мс`;
+    } else if (health.ok === false) {
+      statusSpan.className = 'proxy-status-tag offline';
+      statusSpan.title = health.error || 'Недоступен';
+      statusSpan.textContent = '🔴 Недоступен';
+    } else {
+      statusSpan.className = 'proxy-status-tag checking';
+      statusSpan.textContent = '❓ Не проверен';
+    }
+    infoDiv.appendChild(statusSpan);
+
+    const actionsDiv = document.createElement('div');
+    actionsDiv.className = 'proxy-actions';
+
+    const recheckBtn = document.createElement('button');
+    recheckBtn.className = 'icon-btn recheck-btn';
+    recheckBtn.title = 'Проверить доступность';
+    recheckBtn.textContent = '🔄';
+    recheckBtn.addEventListener('click', async () => {
       showToast(`Проверка ${item.address}...`);
       const res = await checkProxyAvailability(item.raw);
       if (res.ok) {
@@ -733,11 +741,22 @@ function renderCustomProxiesList() {
         showToast(`✕ ${item.address} недоступен: ${res.error || 'Сбой'}`);
       }
     });
+    actionsDiv.appendChild(recheckBtn);
 
-    // Delete button — P1.5: filter by item.raw instead of splice(index) to avoid stale closure
-    itemEl.querySelector('.delete-btn').addEventListener('click', async () => {
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'icon-btn delete delete-btn';
+    deleteBtn.title = 'Удалить';
+    deleteBtn.textContent = '✕';
+    deleteBtn.addEventListener('click', async () => {
       const currentList = parseCustomProxies(appState.pacMods.customProxyStringRaw || '');
-      const newList = currentList.filter((p) => p.raw !== item.raw);
+      let deleted = false;
+      const newList = currentList.filter((p) => {
+        if (!deleted && p.raw === item.raw) {
+          deleted = true;
+          return false;
+        }
+        return true;
+      });
       delete appState.proxyHealthMap[item.raw];
       const newRaw = newList.map((p) => p.raw).join(';\n');
       const mods = Object.assign({}, appState.pacMods, { customProxyStringRaw: newRaw });
@@ -748,7 +767,10 @@ function renderCustomProxiesList() {
         showToast('Прокси удалён');
       }
     });
+    actionsDiv.appendChild(deleteBtn);
 
+    itemEl.appendChild(infoDiv);
+    itemEl.appendChild(actionsDiv);
     el.proxyCardsList.appendChild(itemEl);
   });
 }
@@ -1024,8 +1046,15 @@ async function handleOptionsFileImport(e) {
 
     if (el.importModalCount) el.importModalCount.textContent = validDomains.length;
     if (el.importModalSummary) {
-      const skipMsg = skippedCount > 0 ? ` (пропущено некорректных строк: ${skippedCount})` : '';
-      el.importModalSummary.innerHTML = `Найдено корректных доменов: <strong style="color: var(--text-primary);">${validDomains.length}</strong>${skipMsg}`;
+      el.importModalSummary.textContent = '';
+      el.importModalSummary.appendChild(document.createTextNode('Найдено корректных доменов: '));
+      const strong = document.createElement('strong');
+      strong.style.color = 'var(--text-primary)';
+      strong.textContent = String(validDomains.length);
+      el.importModalSummary.appendChild(strong);
+      if (skippedCount > 0) {
+        el.importModalSummary.appendChild(document.createTextNode(` (пропущено некорректных строк: ${skippedCount})`));
+      }
     }
 
     if (el.importModal) {
@@ -1247,7 +1276,51 @@ function renderLogs() {
 
     const levelBadgeText = level === 'error' ? 'Ошибка' : level === 'warn' ? 'Предупреждение' : 'Инфо';
     const catText = categoryLabels[log.category] || log.category;
-    const repeatHtml = log.count > 1 ? `<span class="log-repeat-badge" title="Повторено ${log.count} раз">×${log.count}</span>` : '';
+
+    const header = document.createElement('div');
+    header.className = 'log-card-header';
+
+    const badges = document.createElement('div');
+    badges.className = 'log-card-badges';
+
+    const levelBadge = document.createElement('span');
+    levelBadge.className = `log-badge ${level}`;
+    levelBadge.textContent = levelBadgeText;
+    badges.appendChild(levelBadge);
+
+    const catBadge = document.createElement('span');
+    catBadge.className = 'category-tag';
+    catBadge.textContent = catText;
+    badges.appendChild(catBadge);
+
+    if (log.count > 1) {
+      const repeatBadge = document.createElement('span');
+      repeatBadge.className = 'log-repeat-badge';
+      repeatBadge.title = `Повторено ${log.count} раз`;
+      repeatBadge.textContent = `×${log.count}`;
+      badges.appendChild(repeatBadge);
+    }
+    header.appendChild(badges);
+
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'log-time';
+    timeSpan.title = date.toLocaleString('ru-RU');
+    timeSpan.textContent = `🕒 ${timeFormatted}`;
+    header.appendChild(timeSpan);
+
+    card.appendChild(header);
+
+    const titleDiv = document.createElement('div');
+    titleDiv.className = 'log-card-title';
+    titleDiv.textContent = log.title || '';
+    card.appendChild(titleDiv);
+
+    if (log.message) {
+      const msgDiv = document.createElement('div');
+      msgDiv.className = 'log-card-message';
+      msgDiv.textContent = log.message;
+      card.appendChild(msgDiv);
+    }
 
     let detailsJson = '';
     if (log.details) {
@@ -1258,32 +1331,22 @@ function renderLogs() {
       }
     }
 
-    card.innerHTML = `
-      <div class="log-card-header">
-        <div class="log-card-badges">
-          <span class="log-badge ${level}">${levelBadgeText}</span>
-          <span class="category-tag">${catText}</span>
-          ${repeatHtml}
-        </div>
-        <span class="log-time" title="${date.toLocaleString('ru-RU')}">🕒 ${timeFormatted}</span>
-      </div>
-      <div class="log-card-title">${escapeHtml(log.title)}</div>
-      ${log.message ? `<div class="log-card-message">${escapeHtml(log.message)}</div>` : ''}
-      ${detailsJson ? `
-        <div class="log-expand-hint">▶ Нажмите, чтобы посмотреть подробности</div>
-        <div class="log-details-block">${escapeHtml(detailsJson)}</div>
-      ` : ''}
-    `;
-
     if (detailsJson) {
+      const hint = document.createElement('div');
+      hint.className = 'log-expand-hint';
+      hint.textContent = '▶ Нажмите, чтобы посмотреть подробности';
+      card.appendChild(hint);
+
+      const detailsBlock = document.createElement('div');
+      detailsBlock.className = 'log-details-block';
+      detailsBlock.textContent = detailsJson;
+      card.appendChild(detailsBlock);
+
       card.addEventListener('click', () => {
         card.classList.toggle('expanded');
-        const hint = card.querySelector('.log-expand-hint');
-        if (hint) {
-          hint.textContent = card.classList.contains('expanded')
-            ? '▼ Скрыть подробности'
-            : '▶ Нажмите, чтобы посмотреть подробности';
-        }
+        hint.textContent = card.classList.contains('expanded')
+          ? '▼ Скрыть подробности'
+          : '▶ Нажмите, чтобы посмотреть подробности';
       });
     }
 
@@ -1291,15 +1354,6 @@ function renderLogs() {
   });
 }
 
-function escapeHtml(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
 
 function getPluralRecords(n) {
   const mod10 = n % 10;
@@ -1760,11 +1814,16 @@ function setupEvents() {
       el.connResult.textContent = 'Тестирование...';
       const res = await sendMessage({ action: 'TEST_CONNECTION' });
       el.testConnBtn.disabled = false;
+      el.connResult.textContent = '';
+      const span = document.createElement('span');
       if (res.success) {
-        el.connResult.innerHTML = `<span style="color: var(--success)">✓ Доступно (${res.latency} мс)</span>`;
+        span.style.color = 'var(--success)';
+        span.textContent = `✓ Доступно (${res.latency} мс)`;
       } else {
-        el.connResult.innerHTML = `<span style="color: var(--danger)">✕ Ошибка (${res.error || 'Сбой'})</span>`;
+        span.style.color = 'var(--danger)';
+        span.textContent = `✕ Ошибка (${res.error || 'Сбой'})`;
       }
+      el.connResult.appendChild(span);
     });
   }
 

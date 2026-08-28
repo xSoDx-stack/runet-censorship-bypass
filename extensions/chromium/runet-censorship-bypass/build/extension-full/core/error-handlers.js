@@ -21,13 +21,16 @@ class ErrorHandlersManager {
   setupListeners() {
     if (this._listenersRegistered) return;
 
-    if (chrome.proxy && chrome.proxy.onProxyError && !chrome.proxy.onProxyError.hasListeners()) {
+    // P2.6: Check typeof before calling hasListeners() to prevent TypeError if API shape differs
+    if (chrome.proxy && chrome.proxy.onProxyError &&
+        (typeof chrome.proxy.onProxyError.hasListeners !== 'function' || !chrome.proxy.onProxyError.hasListeners())) {
       chrome.proxy.onProxyError.addListener((details) => {
         this.handleProxyError(details);
       });
     }
 
-    if (chrome.notifications && chrome.notifications.onClicked && !chrome.notifications.onClicked.hasListeners()) {
+    if (chrome.notifications && chrome.notifications.onClicked &&
+        (typeof chrome.notifications.onClicked.hasListeners !== 'function' || !chrome.notifications.onClicked.hasListeners())) {
       chrome.notifications.onClicked.addListener((notId) => {
         chrome.notifications.clear(notId);
       });

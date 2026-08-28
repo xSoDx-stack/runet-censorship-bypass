@@ -56,11 +56,18 @@ class IpToHostManager {
     const cleanHost = String(host).trim();
     if (!cleanHost) return;
 
-    // Check if host itself is an IP address
-    const ipv4Match = cleanHost.match(/^(\d{1,3}\.){3}\d{1,3}/);
-    if (ipv4Match) {
-      const ip = ipv4Match[0];
-      this.ipToHostMap[ip] = cleanHost;
+    // Safe IP extraction: handles bare IPs, host:port, [ipv6]:port and bare [ipv6]
+    let bareIp = cleanHost;
+    if (cleanHost.startsWith('[')) {
+      bareIp = cleanHost.replace(/^\[([^\]]+)\](?::\d+)?$/, '$1');
+    } else if (cleanHost.includes(':')) {
+      bareIp = cleanHost.split(':')[0];
+    }
+
+    const isIPv4 = /^(\d{1,3}\.){3}\d{1,3}$/.test(bareIp);
+    const isIPv6 = bareIp.includes(':') || bareIp === 'localhost';
+    if (isIPv4 || isIPv6) {
+      this.ipToHostMap[bareIp] = cleanHost;
     }
 
     if (Array.isArray(ips)) {
