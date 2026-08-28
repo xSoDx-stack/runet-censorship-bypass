@@ -306,6 +306,48 @@ function FindProxyForURL(url, host) {
       // Non-matching domain should fall back to original PAC (DIRECT)
       expect(findProxy('https://unrelated-domain.com/', 'unrelated-domain.com')).to.equal('DIRECT');
     });
+
+    it('precedence: more specific wildcard rule (*.sub.example.com) takes precedence over shallower exact rule (example.com)', () => {
+      const mods = {
+        ifMindExceptions: true,
+        exceptions: {
+          'example.com': true,
+          '*.sub.example.com': false,
+        },
+        filteredCustomsString: 'HTTPS custom-proxy.example:443',
+        ifProxyOrDie: true,
+        ifUsePacScriptProxies: true,
+      };
+
+      const cooked = cookPac(basePac, mods);
+      const findProxy = evaluateCookedPac(cooked);
+
+      // x.sub.example.com matches deeper wildcard *.sub.example.com (DIRECT) before shallower exact example.com
+      expect(findProxy('https://x.sub.example.com/', 'x.sub.example.com')).to.equal('DIRECT');
+      // other.example.com matches shallower exact example.com parent
+      expect(findProxy('https://other.example.com/', 'other.example.com')).to.equal('HTTPS custom-proxy.example:443');
+    });
+
+    it('precedence: more specific exact parent rule (sub.example.com) takes precedence over shallower wildcard rule (*.example.com)', () => {
+      const mods = {
+        ifMindExceptions: true,
+        exceptions: {
+          '*.example.com': false,
+          'sub.example.com': true,
+        },
+        filteredCustomsString: 'HTTPS custom-proxy.example:443',
+        ifProxyOrDie: true,
+        ifUsePacScriptProxies: true,
+      };
+
+      const cooked = cookPac(basePac, mods);
+      const findProxy = evaluateCookedPac(cooked);
+
+      // x.sub.example.com matches deeper sub.example.com (PROXIED) before shallower wildcard *.example.com (DIRECT)
+      expect(findProxy('https://x.sub.example.com/', 'x.sub.example.com')).to.equal('HTTPS custom-proxy.example:443');
+      // other.example.com matches shallower *.example.com (DIRECT)
+      expect(findProxy('https://other.example.com/', 'other.example.com')).to.equal('DIRECT');
+    });
   });
 });
 

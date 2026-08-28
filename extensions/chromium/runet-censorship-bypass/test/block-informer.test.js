@@ -29,7 +29,7 @@ describe('BlockInformer & IpToHost', () => {
     ipToHost.addHost('198.51.100.25:8080', ['198.51.100.25']);
     expect(ipToHost.get('198.51.100.25')).to.equal('198.51.100.25:8080');
 
-    ipToHost.updateFromProxyString('HTTPS custom-proxy.net:443; SOCKS5 10.20.30.40:1080');
+    ipToHost.updateFromPac('function FindProxyForURL() { return "HTTPS custom-proxy.net:443; SOCKS5 10.20.30.40:1080; DIRECT"; }');
     expect(ipToHost.get('10.20.30.40')).to.equal('10.20.30.40:1080');
   });
 

@@ -51,11 +51,18 @@ export const httpLib = {
         );
       }
 
+      const formatLimit = (bytes) => {
+        if (bytes >= 1024 * 1024) {
+          return `${(bytes / (1024 * 1024)).toFixed(0)} МБ`;
+        }
+        return `${Math.round(bytes / 1024)} КБ`;
+      };
+
       const contentLength = res.headers && res.headers.get && res.headers.get('content-length');
       if (contentLength && Number(contentLength) > maxBytes) {
         throw clarify(
           new Error('Response body too large'),
-          'Размер ответа превышает допустимый лимит (2 МБ).'
+          `Размер ответа превышает допустимый лимит (${formatLimit(maxBytes)}).`
         );
       }
 
@@ -79,7 +86,7 @@ export const httpLib = {
             } catch { }
             throw clarify(
               new Error('Response body too large'),
-              'Размер ответа превышает допустимый лимит (2 МБ).'
+              `Размер ответа превышает допустимый лимит (${formatLimit(maxBytes)}).`
             );
           }
           resultText += decoder.decode(value, { stream: true });
@@ -92,7 +99,7 @@ export const httpLib = {
       if (text && text.length > maxBytes) {
         throw clarify(
           new Error('Response body too large'),
-          'Размер ответа превышает допустимый лимит (2 МБ).'
+          `Размер ответа превышает допустимый лимит (${formatLimit(maxBytes)}).`
         );
       }
       return text;

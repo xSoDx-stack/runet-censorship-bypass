@@ -84,19 +84,6 @@ class IpToHostManager {
     }
   }
 
-  updateFromProxyString(proxyString) {
-    if (!proxyString) return;
-    const parts = String(proxyString).split(/;\s*/);
-    for (const part of parts) {
-      const cleaned = part.replace(/^(HTTPS|HTTP|PROXY|SOCKS5?)\s+/i, '').trim();
-      if (!cleaned || cleaned === 'DIRECT') continue;
-      const hostOnly = cleaned.split('@').pop() || '';
-      if (hostOnly) {
-        this.addHost(hostOnly);
-      }
-    }
-  }
-
   updateFromPac(pacData) {
     if (!pacData || typeof pacData !== 'string') return;
     const matches = pacData.matchAll(/(?:HTTPS|PROXY|SOCKS5?)\s+([a-zA-Z0-9.\-_:]+)/gi);

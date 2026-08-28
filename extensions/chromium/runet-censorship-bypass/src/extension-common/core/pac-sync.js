@@ -10,6 +10,7 @@ import { logger } from './logger.js';
 
 const STORAGE_KEY = 'antiCensorRu';
 const ALARM_NAME = 'periodic-pac-update';
+const MAX_PAC_BYTES = 10 * 1024 * 1024; // 10 MB (supports extended PAC databases)
 
 const getI18nMsg = (key, fallback) => {
   if (typeof chrome !== 'undefined' && chrome.i18n && typeof chrome.i18n.getMessage === 'function') {
@@ -240,7 +241,7 @@ class PacSyncManager {
         return decoded;
       }
       try {
-        const text = await httpLib.get(url, { timeoutMs: 12000 });
+        const text = await httpLib.get(url, { timeoutMs: 15000, maxBytes: MAX_PAC_BYTES });
         if (text && text.trim().length > 0) {
           if (text.includes('FindProxyForURL')) {
             return text;
