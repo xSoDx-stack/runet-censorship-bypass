@@ -3,6 +3,7 @@
 import { expect } from 'chai';
 import { pacSync } from '../src/extension-common/core/pac-sync.js';
 import { storage } from '../src/extension-common/core/storage.js';
+import { httpLib } from '../src/extension-common/core/http-lib.js';
 
 let mockStorage = {};
 let appliedProxyConfigs = [];
@@ -64,6 +65,7 @@ globalThis.chrome = {
 
 describe('PAC Sync: Pending Request Queue & Concurrency (Item 1)', () => {
   let originalDownload;
+  let originalHttpLibGet;
 
   beforeEach(async () => {
     mockStorage = {};
@@ -73,10 +75,13 @@ describe('PAC Sync: Pending Request Queue & Concurrency (Item 1)', () => {
     await storage.clear();
 
     originalDownload = pacSync.downloadPacFromProvider;
+    originalHttpLibGet = httpLib.get;
+    httpLib.get = async () => 'function FindProxyForURL(url, host) { return "DIRECT"; }';
   });
 
   afterEach(() => {
     pacSync.downloadPacFromProvider = originalDownload;
+    httpLib.get = originalHttpLibGet;
   });
 
   it('1. Sync A is running -> request B arrives -> B executes after A and becomes the final state', async () => {

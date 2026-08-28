@@ -3,8 +3,19 @@
 import { expect } from 'chai';
 import { ipToHost } from '../src/extension-common/core/ip-to-host.js';
 import { blockInformer } from '../src/extension-common/core/block-informer.js';
+import { httpLib } from '../src/extension-common/core/http-lib.js';
 
 describe('BlockInformer & IpToHost', () => {
+  let origHttpLibGet;
+
+  before(() => {
+    origHttpLibGet = httpLib.get;
+    httpLib.get = async () => 'function FindProxyForURL(url, host) { return "DIRECT"; }';
+  });
+
+  after(() => {
+    httpLib.get = origHttpLibGet;
+  });
   it('should identify known default proxy IPs in ipToHost', () => {
     expect(ipToHost.get('195.201.201.32')).to.include('proxy.antizapret.prostovpn.org');
     expect(ipToHost.get('127.0.0.1')).to.equal('localhost');

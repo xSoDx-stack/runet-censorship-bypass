@@ -90,6 +90,10 @@ class PacSyncManager {
     this.cookedPacData = '';
     this.lastError = null;
     this.revision++;
+    this._isSyncRunning = false;
+    this.isSyncing = false;
+    this._currentSyncPromise = null;
+    this._currentRunningOptions = null;
     this._pendingSync = null;
     this.updateTitle();
   }
@@ -346,7 +350,11 @@ class PacSyncManager {
     );
   }
 
-  async syncWithPacProvider({ key = this.currentPacProviderKey, customUrl = null, ifUnattended = false } = {}) {
+  async syncWithPacProvider(options = {}) {
+    const opts = typeof options === 'string' ? { key: options } : (options || {});
+    const key = opts.key || this.currentPacProviderKey;
+    const customUrl = opts.customUrl || null;
+    const ifUnattended = Boolean(opts.ifUnattended);
     const requestOptions = { key, customUrl, ifUnattended };
 
     // If no sync is currently in-flight, start the execution loop immediately

@@ -157,4 +157,20 @@ describe('Proxy Health Check: Concurrency & State Race Protection (P1-1)', () =>
     expect(lastConfig.pacScript.data).to.not.include('1.2.3.4:8080');
     expect(pacSync.currentPacProviderKey).to.equal('Антицензорити');
   });
+
+  it('should sequentially batch check multiple proxies via checkMultipleProxies', async () => {
+    const { checkMultipleProxies } = await import('../src/extension-common/core/proxy-checker.js');
+    globalThis.fetch = async () => ({ status: 200 });
+
+    const results = await checkMultipleProxies([
+      'HTTPS valid-1.example:443',
+      'SOCKS5 127.0.0.1:9050',
+    ]);
+
+    expect(results).to.have.property('HTTPS valid-1.example:443');
+    expect(results['HTTPS valid-1.example:443'].ok).to.be.true;
+    expect(results).to.have.property('SOCKS5 127.0.0.1:9050');
+    expect(results['SOCKS5 127.0.0.1:9050'].ok).to.be.true;
+  });
 });
+

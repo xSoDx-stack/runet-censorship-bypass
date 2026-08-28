@@ -50,6 +50,22 @@ export function checkProxyHealth(proxyString) {
 }
 
 /**
+ * Sequential batch check for multiple proxies through mutex queue
+ */
+export async function checkMultipleProxies(proxyList = []) {
+  if (!Array.isArray(proxyList) || !proxyList.length) {
+    return {};
+  }
+  const results = {};
+  for (const proxyStr of proxyList) {
+    if (proxyStr && typeof proxyStr === 'string' && proxyStr.trim()) {
+      results[proxyStr] = await checkProxyHealth(proxyStr);
+    }
+  }
+  return results;
+}
+
+/**
  * Internal execution of a single proxy health probe with PAC delegation and revision safety
  */
 async function executeSingleProxyHealthCheck(proxyString) {

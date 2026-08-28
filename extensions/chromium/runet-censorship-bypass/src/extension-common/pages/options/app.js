@@ -1,6 +1,6 @@
 'use strict';
 
-import { parseCustomProxies } from '../../core/utils.js';
+import { parseCustomProxies, getRootDomain } from '../../core/utils.js';
 
 /**
  * Options & Popup Application Logic for Manifest V3
@@ -179,31 +179,6 @@ function showToast(text, duration = 2400) {
   }, duration);
 }
 
-/**
- * Extract root/base domain from a hostname using Public Suffix List (tldts)
- * (e.g. sub.example.com -> example.com, static.site.co.uk -> site.co.uk).
- * Safely falls back to full host for IP addresses, localhost, or unknown suffixes.
- */
-function getRootDomain(hostname) {
-  if (!hostname || typeof hostname !== 'string') return '';
-  let host = hostname.toLowerCase().trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/:\d+$/, '');
-  host = host.replace(/^\.+|\.+$/g, '');
-  if (host.startsWith('www.')) {
-    host = host.slice(4);
-  }
-  if (!host) return '';
-
-  const tldtsLib = (typeof window !== 'undefined' && window.tldts) || (typeof globalThis !== 'undefined' && globalThis.tldts) || null;
-  if (tldtsLib && tldtsLib.getDomain) {
-    try {
-      const domain = tldtsLib.getDomain(host, { allowPrivateDomains: true });
-      if (domain) return domain;
-    } catch {
-      // fallback
-    }
-  }
-  return host;
-}
 
 /**
  * Validates whether a URL is a real public web page and not a browser service/internal/extension page.

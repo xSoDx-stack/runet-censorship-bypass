@@ -1,6 +1,6 @@
 {
   "name": "anticheburnet",
-  "version": "2.2.20",
+  "version": "2.2.20.1",
   "description": "АнтиЧебурнет - расширение для обхода интернет-цензуры на базе PAC-скриптов (Manifest V3)",
   "scripts": {
     "build": "npm --prefix extensions/chromium/runet-censorship-bypass run release",
