@@ -54,6 +54,10 @@ describe('Storage Manager: Strict Error Handling (Task 5)', () => {
     };
   });
 
+  afterEach(() => {
+    simulatedError = null;
+  });
+
   it('should return defaultValue when key is absent in successful storage read', async () => {
     const val = await storage.get('non_existent_key', { fallback: true });
     expect(val).to.deep.equal({ fallback: true });

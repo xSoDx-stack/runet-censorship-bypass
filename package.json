@@ -1,8 +1,15 @@
 {
   "name": "anticheburnet",
-  "version": "2.2.21",
+  "version": "2.2.22",
   "description": "АнтиЧебурнет - расширение для обхода интернет-цензуры на базе PAC-скриптов (Manifest V3)",
   "scripts": {
+    "version:sync": "node scripts/sync-version.mjs",
+    "version:check": "node scripts/sync-version.mjs --check",
+    "version": "npm run version:sync",
+    "bump:patch": "npm version patch --no-git-tag-version",
+    "prebuild": "npm run version:check",
+    "prelint": "npm run version:check",
+    "pretest": "npm run version:check",
     "build": "npm --prefix extensions/chromium/runet-censorship-bypass run release",
     "lint": "npm --prefix extensions/chromium/runet-censorship-bypass run lint",
     "test": "npm --prefix extensions/chromium/runet-censorship-bypass run test"

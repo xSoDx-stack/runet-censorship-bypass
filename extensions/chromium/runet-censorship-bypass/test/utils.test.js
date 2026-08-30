@@ -1,7 +1,11 @@
 'use strict';
 
 import { expect } from 'chai';
-import { parseProxyScheme, getRootDomain } from '../src/extension-common/core/utils.js';
+import {
+  parseProxyHostInput,
+  parseProxyScheme,
+  getRootDomain,
+} from '../src/extension-common/core/utils.js';
 
 describe('Utils: parseProxyScheme & getRootDomain (Tasks 6 & 7.1)', () => {
   describe('Canonical Proxy Parser', () => {
@@ -85,6 +89,26 @@ describe('Utils: parseProxyScheme & getRootDomain (Tasks 6 & 7.1)', () => {
       expect(parseProxyScheme('HTTP [::1]:')).to.be.null; // empty port
       expect(parseProxyScheme('HTTP :8080')).to.be.null; // empty hostname
       expect(parseProxyScheme('HTTP []:8080')).to.be.null; // empty bracket
+      expect(parseProxyScheme('HTTPS bad host:443')).to.be.null;
+      expect(parseProxyScheme('HTTPS 999.999.999.999:443')).to.be.null;
+      expect(parseProxyScheme('HTTPS :pass@proxy.example:443')).to.be.null;
+      expect(parseProxyScheme('SOCKS5 2001:db8::1:1080')).to.be.null;
+    });
+
+    it('normalizes host and port input from the structured proxy form', () => {
+      expect(parseProxyHostInput('proxy.example:8443')).to.deep.equal({
+        host: 'proxy.example',
+        port: '8443',
+      });
+      expect(parseProxyHostInput('[2001:db8::1]:1080')).to.deep.equal({
+        host: '[2001:db8::1]',
+        port: '1080',
+      });
+      expect(parseProxyHostInput('2001:db8::1', '1080')).to.deep.equal({
+        host: '[2001:db8::1]',
+        port: '1080',
+      });
+      expect(parseProxyHostInput('[::1]:bad')).to.equal(null);
     });
 
     it('should parse multi-line custom proxy string using canonical parseCustomProxies', async () => {

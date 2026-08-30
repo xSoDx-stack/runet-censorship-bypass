@@ -72,21 +72,21 @@ export function parseProxyScheme(proxyAsStringRaw, defaultType = 'HTTPS') {
     creds = str.slice(0, atIndex);
     addr = str.slice(atIndex + 1);
 
-    if (creds) {
-      const credParts = creds.split(':');
-      const rawUser = credParts[0] || '';
-      const rawPass = credParts.slice(1).join(':') || '';
-      try {
-        username = decodeURIComponent(rawUser);
-      } catch {
-        username = rawUser;
-      }
-      try {
-        password = decodeURIComponent(rawPass);
-      } catch {
-        password = rawPass;
-      }
+    if (!creds) return null;
+    const credParts = creds.split(':');
+    const rawUser = credParts[0] || '';
+    const rawPass = credParts.slice(1).join(':') || '';
+    try {
+      username = decodeURIComponent(rawUser);
+    } catch {
+      username = rawUser;
     }
+    try {
+      password = decodeURIComponent(rawPass);
+    } catch {
+      password = rawPass;
+    }
+    if (!username) return null;
   }
 
   addr = addr.trim();
@@ -111,8 +111,19 @@ export function parseProxyScheme(proxyAsStringRaw, defaultType = 'HTTPS') {
     if (colonIndex === -1) return null; // port is mandatory
     hostname = addr.slice(0, colonIndex).toLowerCase().trim();
     portStr = addr.slice(colonIndex + 1).trim();
+    if (hostname.includes(':')) return null; // IPv6 must use [address]:port form
   }
 
+  if (!hostname) return null;
+
+  // Reject whitespace, URL delimiters and malformed IP literals before they
+  // can become an invalid PAC proxy directive. URL also canonicalizes IDNs.
+  if (/[\s/?#@"'\\]/.test(hostname)) return null;
+  try {
+    hostname = new URL(`http://${hostname}/`).hostname.toLowerCase().replace(/\.$/, '');
+  } catch {
+    return null;
+  }
   if (!hostname) return null;
 
   const portNum = Number(portStr);
@@ -137,6 +148,42 @@ export function parseProxyScheme(proxyAsStringRaw, defaultType = 'HTTPS') {
     hasAuth: Boolean(username || password),
     raw: proxyAsStringRaw.trim(),
   };
+}
+
+/**
+ * Separates an optional port from the structured proxy form's host field and
+ * canonicalizes bare IPv6 addresses to the bracketed form used by PAC.
+ */
+export function parseProxyHostInput(rawHost, rawPort = '') {
+  let host = typeof rawHost === 'string' ? rawHost.trim() : '';
+  let port = rawPort === null || rawPort === undefined ? '' : String(rawPort).trim();
+  if (!host) return null;
+
+  host = host.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').replace(/\/.*$/, '').trim();
+  if (!host) return null;
+
+  if (host.startsWith('[')) {
+    const match = host.match(/^\[([^\]]+)](?::([^:]+))?$/);
+    if (!match) return null;
+    host = `[${match[1]}]`;
+    if (match[2]) {
+      if (!/^\d+$/.test(match[2])) return null;
+      if (!port) port = match[2];
+    }
+  } else {
+    const colonCount = (host.match(/:/g) || []).length;
+    if (colonCount === 1) {
+      const separator = host.lastIndexOf(':');
+      const embeddedPort = host.slice(separator + 1);
+      if (!/^\d+$/.test(embeddedPort)) return null;
+      host = host.slice(0, separator);
+      if (!port) port = embeddedPort;
+    } else if (colonCount > 1) {
+      host = `[${host}]`;
+    }
+  }
+
+  return host ? { host, port } : null;
 }
 
 /**
@@ -193,6 +240,7 @@ export const utils = {
   },
 
   parseProxyScheme,
+  parseProxyHostInput,
   parseCustomProxies,
   getRootDomain,
 

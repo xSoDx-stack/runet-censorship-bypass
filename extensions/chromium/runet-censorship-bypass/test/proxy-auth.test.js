@@ -161,8 +161,8 @@ describe('Proxy Authentication: Separate Temporary & Persistent Credentials', ()
   });
 
   it('should reload persistent credentials from storage on initProxyAuth', async () => {
-    await storage.set('proxy-credentials-map', {
-      'persisted.local:8080': { username: 'storedUser', password: 'storedPassword' },
+    await storage.set('pac-kitchen-mods', {
+      customProxyStringRaw: 'HTTP storedUser:storedPassword@persisted.local:8080',
     });
 
     await initProxyAuth();

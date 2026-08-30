@@ -242,8 +242,16 @@ class LoggerManager {
   async clear() {
     this.logs = [];
     clearTimeout(this.saveTimeout);
+    this.saveTimeout = null;
     await storage.set(STORAGE_LOGS_KEY, []);
     return true;
+  }
+
+  resetRuntimeState() {
+    this.logs = [];
+    clearTimeout(this.saveTimeout);
+    this.saveTimeout = null;
+    this.isInitialized = false;
   }
 
   /**

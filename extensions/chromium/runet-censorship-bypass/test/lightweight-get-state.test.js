@@ -10,7 +10,7 @@ let mockStorage = {};
 globalThis.chrome = {
   runtime: {
     lastError: null,
-    getManifest: () => ({ version: '2.2.19' }),
+      getManifest: () => ({ version: '0.0.0-test' }),
   },
   action: {
     setIcon: () => {},

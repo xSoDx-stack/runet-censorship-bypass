@@ -1,6 +1,9 @@
 'use strict';
 
-import { parseCustomProxies, getRootDomain } from '../../core/utils.js';
+import { parseCustomProxies, getRootDomain, parseProxyHostInput } from '../../core/utils.js';
+import { normalizeDomainRule, parseDomainRuleLines } from '../../core/domain-rules.js';
+import { formatLogEntryForClipboard } from '../../core/log-format.js';
+import { buildRknBlocklistUrl, normalizeRknLookupUrl } from '../../core/rkn-blocklist.js';
 
 /**
  * Options & Popup Application Logic for Manifest V3
@@ -643,7 +646,7 @@ function renderCustomProxiesList() {
     if (item.hasAuth) {
       const authSpan = document.createElement('span');
       authSpan.className = 'proxy-auth-tag';
-      authSpan.title = item.user ? `Логин: ${item.user}` : 'Авторизация';
+      authSpan.title = item.username ? `Логин: ${item.username}` : 'Авторизация';
       authSpan.textContent = '🔒';
       infoDiv.appendChild(authSpan);
     }
@@ -700,7 +703,7 @@ function renderCustomProxiesList() {
       });
       delete appState.proxyHealthMap[item.raw];
       const newRaw = newList.map((p) => p.raw).join(';\n');
-      const mods = Object.assign({}, appState.pacMods, { customProxyStringRaw: newRaw });
+      const mods = { customProxyStringRaw: newRaw };
       const res = await sendMessage({ action: 'SAVE_MODS', mods });
       if (res.success) {
         appState.pacMods = res.data;
@@ -733,13 +736,14 @@ async function handleAddStructuredProxy() {
     return;
   }
 
-  // Strip protocol prefixes if typed into host
-  host = host.replace(/^[a-zA-Z0-9]+:\/\//, '').replace(/\/.*$/, '');
-  if (host.includes(':')) {
-    const [h, p] = host.split(':');
-    host = h;
-    if (!port && p) port = p;
+  const parsedHostInput = parseProxyHostInput(host, port);
+  if (!parsedHostInput) {
+    showFormAlert('Некорректный IP-адрес или хост');
+    el.proxyHost?.focus();
+    return;
   }
+  host = parsedHostInput.host;
+  port = parsedHostInput.port;
 
   if (!port) {
     port = protocol === 'HTTP' ? '8080' : protocol === 'HTTPS' ? '443' : '1080';
@@ -752,11 +756,17 @@ async function handleAddStructuredProxy() {
     proxyLine = `${protocol} ${host}:${port}`;
   }
 
+  const [candidateProxy] = parseCustomProxies(proxyLine);
+  if (!candidateProxy) {
+    showFormAlert('Проверьте адрес прокси и номер порта (1–65535)');
+    return;
+  }
+
   const currentRaw = appState.pacMods.customProxyStringRaw || '';
   const currentList = parseCustomProxies(currentRaw);
 
   // Check duplicates
-  if (currentList.some((p) => p.address === `${host}:${port}` && p.type === protocol)) {
+  if (currentList.some((p) => p.address === candidateProxy.address && p.type === candidateProxy.type)) {
     showFormAlert('Такой прокси уже добавлен в список');
     return;
   }
@@ -782,7 +792,7 @@ async function handleAddStructuredProxy() {
     currentList.push({ raw: proxyLine });
     const newRaw = currentList.map((p) => p.raw).join(';\n');
 
-    const mods = Object.assign({}, appState.pacMods, { customProxyStringRaw: newRaw });
+    const mods = { customProxyStringRaw: newRaw };
     const res = await sendMessage({ action: 'SAVE_MODS', mods });
 
     if (res.success) {
@@ -901,73 +911,9 @@ async function parseAndValidateDomainFile(file) {
   // Cap at 100,000 lines to prevent UI freezing
   const lines = allLines.slice(0, 100000);
 
-  const validSet = new Set();
-  let skippedCount = 0;
-
-  // Regex validators for domains (ASCII and Cyrillic IDN) and IPs
-  const asciiDomainRegex = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}$/i;
-  const cyrillicDomainRegex = /^(?:[\u0400-\u04FF0-9](?:[\u0400-\u04FF0-9-]{0,61}[\u0400-\u04FF0-9])?\.)+[\u0400-\u04FF0-9-]{2,63}$/i;
-  const ipv4Regex = /^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/;
-
-  for (let rawLine of lines) {
-    // Strip standard and unicode whitespace (e.g. non-breaking space, zero-width space, full-width space)
-    let line = rawLine.replace(/^[\s\u00A0\u200B-\u200D\uFEFF\u3000]+|[\s\u00A0\u200B-\u200D\uFEFF\u3000]+$/g, '');
-
-    // Skip empty lines
-    if (!line) {
-      continue;
-    }
-
-    // Skip full comment lines (#, //, ;, !, --)
-    if (/^(?:#|\/\/|;|!|--)/.test(line)) {
-      continue;
-    }
-
-    // Strip inline comments (e.g., "example.com # note" or "example.com // comment")
-    line = line.replace(/\s+(?:#|\/\/|;|!).*$/, '').trim();
-    if (!line) {
-      continue;
-    }
-
-    // Strip URL protocols (http://, https://, ftp://, ws://, wss://, etc.)
-    line = line.replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//, '');
-
-    // Strip user auth (user:pass@)
-    line = line.replace(/^[^@\s]+@/, '');
-
-    // Strip paths, query parameters, hashes
-    line = line.replace(/[/?#].*$/, '');
-
-    // Strip ports (:8080)
-    line = line.replace(/:\d+$/, '');
-
-    // Check for wildcard prefix
-    const isWildcard = line.startsWith('*.') || (line.startsWith('*') && line.length > 1);
-    let baseHost = line.replace(/^\*\.?/, '').replace(/^\.+/, '').trim().toLowerCase();
-
-    // Strip trailing dot if any (e.g., example.com.)
-    if (baseHost.endsWith('.')) {
-      baseHost = baseHost.slice(0, -1);
-    }
-
-    // Disallow invalid characters or length
-    if (!baseHost || baseHost.length > 253 || baseHost.includes('..') || /[\s<>"'{}[\]\\^~`]/.test(baseHost)) {
-      skippedCount++;
-      continue;
-    }
-
-    // Validate domain syntax
-    const isValid = asciiDomainRegex.test(baseHost) || cyrillicDomainRegex.test(baseHost) || ipv4Regex.test(baseHost);
-
-    if (isValid) {
-      const finalDomain = isWildcard ? `*.${baseHost}` : baseHost;
-      validSet.add(finalDomain);
-    } else {
-      skippedCount++;
-    }
-  }
-
-  const validDomains = Array.from(validSet);
+  const parsedRules = parseDomainRuleLines(lines);
+  const validDomains = parsedRules.validDomains;
+  const skippedCount = parsedRules.skippedCount;
 
   if (validDomains.length === 0) {
     throw new Error(`В файле не найдено ни одного корректного доменного имени (пропущено некорректных строк: ${skippedCount}).`);
@@ -1040,7 +986,7 @@ async function handleConfirmImport() {
 // Handle Options File Export
 async function handleOptionsFileExport() {
   showToast('Подготовка файла экспорта...');
-  const res = await sendMessage({ action: 'GET_FULL_EXCEPTIONS' });
+  const res = await sendMessage({ action: 'GET_EXCEPTIONS' });
   if (!res.success || !res.data) {
     showToast('Ошибка загрузки списков для экспорта');
     return;
@@ -1093,24 +1039,15 @@ async function handleQuickAddDomain() {
     return;
   }
 
-  // Clean and normalize input
-  let domain = inputVal
-    .replace(/^[a-zA-Z0-9+.-]+:\/\//, '')
-    .replace(/[/?#].*$/, '')
-    .replace(/:\d+$/, '')
-    .replace(/^\.+|\.+$/g, '');
-
-  if (domain.startsWith('*.') && domain.length > 2) {
-    domain = domain.slice(2);
-  }
-  if (domain.startsWith('www.')) {
-    domain = domain.slice(4);
-  }
-
-  if (!domain || !domain.includes('.')) {
-    showToast('Укажите корректный домен (напр. rutracker.org)');
+  const normalized = normalizeDomainRule(inputVal);
+  if (!normalized.valid) {
+    showToast(normalized.error);
     el.excQuickInput?.focus();
     return;
+  }
+  let domain = normalized.domain.replace(/^\*\./, '');
+  if (domain.startsWith('www.')) {
+    domain = domain.slice(4);
   }
 
   const rootDomain = getRootDomain(domain) || domain;
@@ -1148,6 +1085,23 @@ async function loadLogs() {
     appState.logsState.stats = res.data.stats || {};
     renderLogs();
   }
+}
+
+async function copyText(text) {
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand('copy');
+  document.body.removeChild(textarea);
+  if (!copied) throw new Error('Clipboard API unavailable');
 }
 
 function renderLogs() {
@@ -1243,11 +1197,23 @@ function renderLogs() {
     }
     header.appendChild(badges);
 
+    const headerActions = document.createElement('div');
+    headerActions.className = 'log-card-actions';
+
     const timeSpan = document.createElement('span');
     timeSpan.className = 'log-time';
     timeSpan.title = date.toLocaleString('ru-RU');
     timeSpan.textContent = `🕒 ${timeFormatted}`;
-    header.appendChild(timeSpan);
+    headerActions.appendChild(timeSpan);
+
+    const copyButton = document.createElement('button');
+    copyButton.type = 'button';
+    copyButton.className = 'log-copy-btn';
+    copyButton.title = 'Скопировать эту запись';
+    copyButton.setAttribute('aria-label', 'Скопировать эту запись журнала');
+    copyButton.textContent = '⧉';
+    headerActions.appendChild(copyButton);
+    header.appendChild(headerActions);
 
     card.appendChild(header);
 
@@ -1291,6 +1257,22 @@ function renderLogs() {
       });
     }
 
+    copyButton.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      try {
+        await copyText(formatLogEntryForClipboard(log, detailsJson));
+        copyButton.classList.add('copied');
+        copyButton.textContent = '✓';
+        showToast('✓ Запись скопирована');
+        setTimeout(() => {
+          copyButton.classList.remove('copied');
+          copyButton.textContent = '⧉';
+        }, 900);
+      } catch {
+        showToast('Не удалось скопировать запись');
+      }
+    });
+
     el.logsContainer.appendChild(card);
   });
 }
@@ -1314,7 +1296,7 @@ async function handleCopyLogs() {
 
   if (res.success && res.data && res.data.text) {
     try {
-      await navigator.clipboard.writeText(res.data.text);
+      await copyText(res.data.text);
       showToast('✓ Логи скопированы в буфер обмена!');
     } catch {
       showToast('Не удалось скопировать в буфер обмена');
@@ -1681,9 +1663,9 @@ function setupEvents() {
   // Save Raw Proxies Textarea
   if (el.saveProxiesBtn) {
     el.saveProxiesBtn.addEventListener('click', async () => {
-      const mods = Object.assign({}, appState.pacMods, {
+      const mods = {
         customProxyStringRaw: el.customProxyText?.value || '',
-      });
+      };
 
       const res = await sendMessage({ action: 'SAVE_MODS', mods });
       if (res.success) {
@@ -1701,7 +1683,7 @@ function setupEvents() {
   const bindProxyToggle = (checkbox, key) => {
     if (!checkbox) return;
     checkbox.addEventListener('change', async () => {
-      const mods = Object.assign({}, appState.pacMods, { [key]: checkbox.checked });
+      const mods = { [key]: checkbox.checked };
       const res = await sendMessage({ action: 'SAVE_MODS', mods });
       if (res.success) {
         appState.pacMods = res.data;
@@ -1719,9 +1701,9 @@ function setupEvents() {
   const bindModToggle = (element, key) => {
     if (!element) return;
     element.addEventListener('change', async () => {
-      const mods = Object.assign({}, appState.pacMods, {
+      const mods = {
         [key]: Boolean(element.checked),
-      });
+      };
 
       const res = await sendMessage({ action: 'SAVE_MODS', mods });
       if (res.success) {
@@ -1778,8 +1760,29 @@ function setupEvents() {
 
   // Diagnostics: Check Blacklist
   if (el.checkBlacklistBtn) {
-    el.checkBlacklistBtn.addEventListener('click', () => {
-      chrome.tabs.create({ url: 'https://reestr.rublacklist.net/' });
+    el.checkBlacklistBtn.addEventListener('click', async () => {
+      let lookupUrl = '';
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        lookupUrl = normalizeRknLookupUrl(tab?.url || tab?.pendingUrl || '');
+      } catch {
+        // Fall back to the domain captured when the extension UI was opened.
+      }
+
+      if (!lookupUrl && appState.currentSiteDomain) {
+        lookupUrl = normalizeRknLookupUrl(`https://${appState.currentSiteDomain}/`);
+      }
+
+      if (!lookupUrl) {
+        showToast('Откройте обычный сайт и повторите проверку');
+        return;
+      }
+
+      try {
+        await chrome.tabs.create({ url: buildRknBlocklistUrl(lookupUrl) });
+      } catch {
+        showToast('Не удалось открыть официальный сервис Роскомнадзора');
+      }
     });
   }
 

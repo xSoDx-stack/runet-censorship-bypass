@@ -1,5 +1,7 @@
 'use strict';
 
+import { normalizeDomainRule, parseDomainRuleLines } from '../../core/domain-rules.js';
+
 /**
  * Standalone Full-Page Exceptions & Sites Manager
  */
@@ -10,6 +12,7 @@ let state = {
   activeSubTab: 'included', // 'included' | 'excluded' | 'whitelist'
   rawMode: false,
 };
+let saveQueue = Promise.resolve();
 
 const el = {
   listViewSection: document.getElementById('listViewSection'),
@@ -46,7 +49,11 @@ function showToast(text, duration = 3000) {
 function sendMessage(msg) {
   return new Promise((resolve) => {
     chrome.runtime.sendMessage(msg, (res) => {
-      resolve(res || { success: false });
+      if (chrome.runtime.lastError) {
+        resolve({ success: false, error: chrome.runtime.lastError.message });
+        return;
+      }
+      resolve(res || { success: false, error: 'Фоновый процесс не ответил' });
     });
   });
 }
@@ -63,19 +70,28 @@ async function loadData() {
   }
 }
 
-async function saveAllData() {
+function saveAllData() {
+  // Capture a snapshot now and serialize writes so rapid clicks cannot let an
+  // older full-state SAVE_MODS response overwrite a newer one.
   const mods = {
-    exceptions: state.exceptions,
-    whitelist: state.whitelist,
+    exceptions: Object.assign({}, state.exceptions),
+    whitelist: [...state.whitelist],
   };
 
-  const res = await sendMessage({ action: 'SAVE_MODS', mods });
-  if (res && res.success) {
-    showToast('✓ Все изменения успешно сохранены!');
-    render();
-  } else {
-    showToast(`Ошибка сохранения: ${res.error || 'Сбой'}`);
-  }
+  const save = async () => {
+    const res = await sendMessage({ action: 'SAVE_MODS', mods });
+    if (res && res.success) {
+      showToast('✓ Все изменения успешно сохранены!');
+      render();
+      return true;
+    }
+    showToast(`Ошибка сохранения: ${(res && res.error) || 'Сбой'}`);
+    return false;
+  };
+
+  const result = saveQueue.then(save, save);
+  saveQueue = result.then(() => undefined, () => undefined);
+  return result;
 }
 
 let renderedCount = 0;
@@ -174,9 +190,12 @@ function appendNextDomainChunk() {
 }
 
 function addDomain(rawDomain) {
-  let domain = (rawDomain || '').trim().toLowerCase();
-  if (!domain) return;
-  domain = domain.replace(/^[a-zA-Z0-9+.-]+:\/\//, '').replace(/[/?#].*$/, '').replace(/:\d+$/, '');
+  const normalized = normalizeDomainRule(rawDomain);
+  if (!normalized.valid) {
+    showToast(normalized.error);
+    return;
+  }
+  const domain = normalized.domain;
 
   if (state.activeSubTab === 'included') {
     state.exceptions[domain] = true;
@@ -255,56 +274,7 @@ async function handleClearList() {
 }
 
 function parseAndValidateDomainLines(lines) {
-  const validSet = new Set();
-  let skippedCount = 0;
-
-  // Regex validators for domains (ASCII and Cyrillic IDN) and IPs
-  const asciiDomainRegex = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}$/i;
-  const cyrillicDomainRegex = /^(?:[\u0400-\u04FF0-9](?:[\u0400-\u04FF0-9-]{0,61}[\u0400-\u04FF0-9])?\.)+[\u0400-\u04FF0-9-]{2,63}$/i;
-  const ipv4Regex = /^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/;
-
-  for (let rawLine of lines) {
-    // Strip standard and unicode whitespace (e.g. non-breaking space, zero-width space, full-width space)
-    let line = rawLine.replace(/^[\s\u00A0\u200B-\u200D\uFEFF\u3000]+|[\s\u00A0\u200B-\u200D\uFEFF\u3000]+$/g, '');
-
-    // Skip empty lines
-    if (!line) continue;
-
-    // Skip full comment lines (#, //, ;, !, --)
-    if (/^(?:#|\/\/|;|!|--)/.test(line)) continue;
-
-    // Strip inline comments
-    line = line.replace(/\s+(?:#|\/\/|;|!).*$/, '').trim();
-    if (!line) continue;
-
-    // Strip URL protocols, user auth, paths, query, ports
-    line = line.replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//, '').replace(/^[^@\s]+@/, '').replace(/[/?#].*$/, '').replace(/:\d+$/, '');
-
-    // Check for wildcard prefix
-    const isWildcard = line.startsWith('*.') || (line.startsWith('*') && line.length > 1);
-    let baseHost = line.replace(/^\*\.?/, '').replace(/^\.+/, '').trim().toLowerCase();
-
-    // Strip trailing dot
-    if (baseHost.endsWith('.')) baseHost = baseHost.slice(0, -1);
-
-    // Disallow invalid characters or length
-    if (!baseHost || baseHost.length > 253 || baseHost.includes('..') || /[\s<>"'{}[\]\\^~`]/.test(baseHost)) {
-      skippedCount++;
-      continue;
-    }
-
-    // Validate domain syntax
-    const isValid = asciiDomainRegex.test(baseHost) || cyrillicDomainRegex.test(baseHost) || ipv4Regex.test(baseHost);
-
-    if (isValid) {
-      const finalDomain = isWildcard ? `*.${baseHost}` : baseHost;
-      validSet.add(finalDomain);
-    } else {
-      skippedCount++;
-    }
-  }
-
-  return { validDomains: Array.from(validSet), skippedCount };
+  return parseDomainRuleLines(lines);
 }
 
 /**
@@ -474,7 +444,7 @@ function toggleMode() {
   }
 }
 
-function saveRawText() {
+async function saveRawText() {
   const text = el.rawTextEditor.value;
   const sections = text
     .trim()
@@ -495,7 +465,8 @@ function saveRawText() {
   state.exceptions = newExceptions;
   state.whitelist = whiteRes.validDomains;
 
-  saveAllData();
+  const wasSaved = await saveAllData();
+  if (!wasSaved) return;
   toggleMode();
 
   const skipMsg = totalSkipped > 0 ? ` (пропущено некорректных строк: ${totalSkipped})` : '';

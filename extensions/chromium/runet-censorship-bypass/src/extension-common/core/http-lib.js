@@ -6,16 +6,19 @@ const checkCon = 'Что-то не так с сетью, проверьте со
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024; // 2 MB
 
 export const httpLib = {
-  async ifModifiedSince(url, lastModified) {
+  async ifModifiedSince(url, lastModified, { timeoutMs = 10000 } = {}) {
     if (url.startsWith('data:')) {
       return false;
     }
     const wasModifiedIn1970 = new Date(0).toUTCString();
     const notModifiedCode = 304;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
       const res = await fetch(url, {
         method: 'HEAD',
+        signal: controller.signal,
         headers: new Headers({
           'If-Modified-Since': lastModified || wasModifiedIn1970,
         }),
@@ -24,11 +27,23 @@ export const httpLib = {
       if (res.status === notModifiedCode) {
         return false;
       }
+      if (res.status < 200 || res.status >= 300) {
+        throw clarify(
+          new Error(`HTTP ${res.status}`),
+          `Получен ответ с неудачным HTTP-кодом ${res.status}.`
+        );
+      }
       return res.headers.get('Last-Modified') || wasModifiedIn1970;
     } catch (err) {
-      // P1.7: Throw instead of silently returning "1970" (which falsely signals "was modified")
-      // Callers that want fire-and-forget should wrap in their own try/catch
+      if (err instanceof Warning) {
+        throw err;
+      }
+      if (err.name === 'AbortError') {
+        throw clarify(err, 'Таймаут соединения с сервером.');
+      }
       throw clarify(err, 'Нет связи с сервером для проверки обновлений.');
+    } finally {
+      clearTimeout(timer);
     }
   },
 
@@ -41,7 +56,6 @@ export const httpLib = {
         cache: 'no-store',
         signal: controller.signal,
       });
-      clearTimeout(timer);
 
       const status = res.status;
       if (!( (status >= 200 && status < 300) || status === 304 )) {
@@ -70,7 +84,7 @@ export const httpLib = {
         const reader = res.body.getReader();
         const decoder = new TextDecoder('utf-8');
         let receivedBytes = 0;
-        let resultText = '';
+        const textChunks = [];
 
         let reading = true;
         while (reading) {
@@ -89,14 +103,15 @@ export const httpLib = {
               `Размер ответа превышает допустимый лимит (${formatLimit(maxBytes)}).`
             );
           }
-          resultText += decoder.decode(value, { stream: true });
+          textChunks.push(decoder.decode(value, { stream: true }));
         }
-        resultText += decoder.decode();
-        return resultText;
+        textChunks.push(decoder.decode());
+        return textChunks.join('');
       }
 
       const text = await res.text();
-      if (text && text.length > maxBytes) {
+      const textBytes = text ? new TextEncoder().encode(text).byteLength : 0;
+      if (textBytes > maxBytes) {
         throw clarify(
           new Error('Response body too large'),
           `Размер ответа превышает допустимый лимит (${formatLimit(maxBytes)}).`
@@ -104,7 +119,6 @@ export const httpLib = {
       }
       return text;
     } catch (err) {
-      clearTimeout(timer);
       if (err instanceof Warning) {
         throw err;
       }
@@ -112,6 +126,9 @@ export const httpLib = {
         throw clarify(err, 'Таймаут соединения с сервером.');
       }
       throw clarify(err, checkCon);
+    } finally {
+      // Keep the timeout active until the complete response body has been read.
+      clearTimeout(timer);
     }
   },
 

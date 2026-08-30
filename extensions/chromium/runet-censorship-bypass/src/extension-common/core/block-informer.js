@@ -2,7 +2,6 @@
 
 import { ipToHost } from './ip-to-host.js';
 import { pacKitchen, matchExceptionDomain } from './pac-kitchen.js';
-import { pacSync } from './pac-sync.js';
 import { logger } from './logger.js';
 import { appState } from './app-state.js';
 
@@ -33,14 +32,6 @@ class BlockInformer {
     }
 
     // 1. Reset on tab navigation / reload
-    if (chrome.webNavigation && chrome.webNavigation.onBeforeNavigate) {
-      chrome.webNavigation.onBeforeNavigate.addListener((details) => {
-        if (details.frameId === 0 && details.tabId >= 0) {
-          this.clearTab(details.tabId);
-        }
-      });
-    }
-
     if (chrome.tabs && chrome.tabs.onUpdated) {
       chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
         if (changeInfo.status === 'loading' && tabId >= 0) {
@@ -185,13 +176,6 @@ class BlockInformer {
         }
       } catch {
         // Non-critical
-      }
-    }
-
-    // C. Check if raw PAC contains domain
-    if (!proxyHost && pacSync && pacSync.rawPacData) {
-      if (pacSync.isDomainInPac(hostname)) {
-        proxyHost = pacSync.getProxyTitle();
       }
     }
 

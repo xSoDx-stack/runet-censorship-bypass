@@ -30,6 +30,16 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   }
 });
 
+// Detect when a policy or another extension takes over the profile-wide
+// proxy setting after AntiCheburnet has already started.
+if (chrome.proxy?.settings?.onChange) {
+  chrome.proxy.settings.onChange.addListener(() => {
+    appState.ensureInitialized()
+      .then(() => pacSync.updateControlState())
+      .catch((err) => console.warn('[Proxy Control State Warning]:', err));
+  });
+}
+
 // 4. Extension Installed / Updated
 chrome.runtime.onInstalled.addListener(async (details) => {
   console.log('[Service Worker] onInstalled reason:', details.reason);

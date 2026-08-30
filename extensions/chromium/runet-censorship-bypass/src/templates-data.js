@@ -10,7 +10,7 @@ const pacUrls = [
 const pkg = require('../package.json');
 
 const commonContext = {
-  version: pkg.version || '2.2.19',
+  version: pkg.version || '0.0.0',
   anticensorityPacUrls: [
     ...pacUrls,
   ],
@@ -41,7 +41,7 @@ exports.contexts.beta = Object.assign({}, commonContext, {
     'https://raw.githubusercontent.com/anticensority/for-testing/master/anticensority.pac',
     'https://anticensority.github.io/for-testing/anticensority.pac',
   ],
-  version: pkg.version || '2.2.19',
+  version: pkg.version || '0.0.0',
   versionSuffix: '',
   nameSuffixEn: ' FOR TESTING',
   nameSuffixRu: ' ДЛЯ ТЕСТОВ',

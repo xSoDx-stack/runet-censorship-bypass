@@ -2,7 +2,7 @@
 
 import { expect } from 'chai';
 import vm from 'vm';
-import { cookPac } from '../src/extension-common/core/pac-kitchen.js';
+import { cookPac, createPacModifiers } from '../src/extension-common/core/pac-kitchen.js';
 
 describe('PAC Kitchen: Proxy Or Die Semantics & Routing Regression Tests', () => {
   const basePac = `
@@ -15,7 +15,27 @@ function FindProxyForURL(url, host) {
   }
   return 'DIRECT';
 }
-`;
+  `;
+
+  it('fresh default settings apply Proxy Or Die instead of returning raw PAC', () => {
+    const [err, defaultMods] = createPacModifiers({});
+    expect(err).to.equal(null);
+    expect(defaultMods.ifProxyOrDie).to.equal(true);
+    const cooked = cookPac(basePac, defaultMods);
+    expect(cooked).to.not.equal(basePac);
+    const findProxy = evaluateCookedPac(cooked);
+    expect(findProxy('https://blocked.example/', 'blocked.example')).to.not.include('DIRECT');
+  });
+
+  it('treats a proxy without an explicit protocol as HTTPS in secure-only mode', () => {
+    const [err, mods] = createPacModifiers({
+      customProxyStringRaw: 'secure-default.example:443\nHTTP insecure.example:8080',
+      ifUseSecureProxiesOnly: true,
+    });
+
+    expect(err).to.equal(null);
+    expect(mods.filteredCustomsString).to.equal('HTTPS secure-default.example:443');
+  });
 
   function evaluateCookedPac(cookedPacCode) {
     const sandbox = {};

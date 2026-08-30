@@ -12,6 +12,51 @@ import { formatErrorMessage } from './errors-lib.js';
 import { ipToHost } from './ip-to-host.js';
 import { resetProxyCredentialsState } from './proxy-auth.js';
 
+const FALLBACK_CONNECTION_TEST_URL = PAC_PROVIDERS['Антизапрет'].pacUrls[0];
+
+export function getRequestedCurrentHost(message = {}) {
+  const candidate = typeof message.currentDomain === 'string'
+    ? message.currentDomain
+    : message.currentHost;
+  return typeof candidate === 'string' ? candidate.trim().toLowerCase() : '';
+}
+
+export function getConnectionTestUrl(syncState = {}) {
+  const providerKey = syncState.currentPacProviderKey || 'Антизапрет';
+  if (providerKey === 'customPacUrl' && syncState.customPacUrl) {
+    return syncState.customPacUrl;
+  }
+
+  const provider = PAC_PROVIDERS[providerKey] || PAC_PROVIDERS['Антизапрет'];
+  const providerUrl = provider.pacUrls && provider.pacUrls[0];
+  return providerUrl && !providerUrl.startsWith('data:')
+    ? providerUrl
+    : FALLBACK_CONNECTION_TEST_URL;
+}
+
+export function serializePacMods(pacMods = {}, includeExceptions = false) {
+  const serialized = {
+    ifProxyHttpsUrlsOnly: Boolean(pacMods.ifProxyHttpsUrlsOnly),
+    ifUseSecureProxiesOnly: Boolean(pacMods.ifUseSecureProxiesOnly),
+    ifProhibitDns: Boolean(pacMods.ifProhibitDns),
+    ifProxyOrDie: pacMods.ifProxyOrDie !== false,
+    ifUsePacScriptProxies: pacMods.ifUsePacScriptProxies !== false,
+    ifUseLocalTor: Boolean(pacMods.ifUseLocalTor),
+    ifUseLocalWarp: Boolean(pacMods.ifUseLocalWarp),
+    ifMindExceptions: pacMods.ifMindExceptions !== false,
+    ifMindWhitelist: Boolean(pacMods.ifMindWhitelist),
+    ifUseOwnProxiesOnlyForOwnSites: Boolean(pacMods.ifUseOwnProxiesOnlyForOwnSites),
+    customProxyStringRaw: pacMods.customProxyStringRaw || '',
+    ifProxyMoreDomains: Boolean(pacMods.ifProxyMoreDomains),
+    replaceDirectWith: pacMods.replaceDirectWith || '',
+  };
+  if (includeExceptions) {
+    serialized.exceptions = Object.assign({}, pacMods.exceptions || {});
+    serialized.whitelist = [...(pacMods.whitelist || [])];
+  }
+  return serialized;
+}
+
 export function setupMessageBus() {
   if (chrome.runtime.onMessage.hasListeners && chrome.runtime.onMessage.hasListeners()) {
     return;
@@ -41,29 +86,16 @@ export function setupMessageBus() {
           const exceptionStats = pacKitchen.getCachedStats();
 
           let currentSiteMatch = null;
-          if (message.currentHost) {
-            currentSiteMatch = matchExceptionDomain(message.currentHost, pacMods.exceptions);
+          const currentHost = getRequestedCurrentHost(message);
+          if (currentHost) {
+            currentSiteMatch = matchExceptionDomain(currentHost, pacMods.exceptions);
           }
 
           return {
             success: true,
             data: {
               syncState,
-              pacMods: {
-                ifProxyHttpsUrlsOnly: Boolean(pacMods.ifProxyHttpsUrlsOnly),
-                ifUseSecureProxiesOnly: Boolean(pacMods.ifUseSecureProxiesOnly),
-                ifProhibitDns: Boolean(pacMods.ifProhibitDns),
-                ifProxyOrDie: pacMods.ifProxyOrDie !== false,
-                ifUsePacScriptProxies: pacMods.ifUsePacScriptProxies !== false,
-                ifUseLocalTor: Boolean(pacMods.ifUseLocalTor),
-                ifUseLocalWarp: Boolean(pacMods.ifUseLocalWarp),
-                ifMindExceptions: pacMods.ifMindExceptions !== false,
-                ifMindWhitelist: Boolean(pacMods.ifMindWhitelist),
-                ifUseOwnProxiesOnlyForOwnSites: Boolean(pacMods.ifUseOwnProxiesOnlyForOwnSites),
-                customProxyStringRaw: pacMods.customProxyStringRaw || '',
-                ifProxyMoreDomains: Boolean(pacMods.ifProxyMoreDomains),
-                replaceDirectWith: pacMods.replaceDirectWith || '',
-              },
+              pacMods: serializePacMods(pacMods, Boolean(message.includeExceptions)),
               defaultConfigs,
               notifications: errorHandlers.notificationsEnabled,
               lastErrors: errorHandlers.getLastErrors(),
@@ -181,25 +213,7 @@ export function setupMessageBus() {
           });
           await pacSync.reapplyCurrentPac();
 
-          const returnMods = {
-            ifProxyHttpsUrlsOnly: Boolean(parsedMods.ifProxyHttpsUrlsOnly),
-            ifUseSecureProxiesOnly: Boolean(parsedMods.ifUseSecureProxiesOnly),
-            ifProhibitDns: Boolean(parsedMods.ifProhibitDns),
-            ifProxyOrDie: parsedMods.ifProxyOrDie !== false,
-            ifUsePacScriptProxies: parsedMods.ifUsePacScriptProxies !== false,
-            ifUseLocalTor: Boolean(parsedMods.ifUseLocalTor),
-            ifUseLocalWarp: Boolean(parsedMods.ifUseLocalWarp),
-            ifMindExceptions: parsedMods.ifMindExceptions !== false,
-            ifMindWhitelist: Boolean(parsedMods.ifMindWhitelist),
-            ifUseOwnProxiesOnlyForOwnSites: Boolean(parsedMods.ifUseOwnProxiesOnlyForOwnSites),
-            customProxyStringRaw: parsedMods.customProxyStringRaw || '',
-            ifProxyMoreDomains: Boolean(parsedMods.ifProxyMoreDomains),
-            replaceDirectWith: parsedMods.replaceDirectWith || '',
-          };
-          if (message.includeExceptions) {
-            returnMods.exceptions = parsedMods.exceptions || {};
-            returnMods.whitelist = parsedMods.whitelist || [];
-          }
+          const returnMods = serializePacMods(parsedMods, Boolean(message.includeExceptions));
           return { success: true, data: returnMods };
         }
 
@@ -267,12 +281,7 @@ export function setupMessageBus() {
           const startTime = Date.now();
           try {
             const syncState = pacSync.getState();
-            const providerKey = syncState.currentPacProviderKey || 'Антизапрет';
-            const prov = PAC_PROVIDERS[providerKey] || PAC_PROVIDERS['Антизапрет'];
-            let testUrl = (prov.pacUrls && prov.pacUrls[0]) || 'https://anticensority.github.io/generated-pac-scripts/anticensority.pac';
-            if (testUrl.startsWith('data:')) {
-              testUrl = 'https://anticensority.github.io/generated-pac-scripts/anticensority.pac';
-            }
+            const testUrl = getConnectionTestUrl(syncState);
             await httpLib.ifModifiedSince(testUrl, null);
             const latency = Date.now() - startTime;
             return { success: true, latency };
@@ -289,6 +298,8 @@ export function setupMessageBus() {
           ipToHost.reset();
           await pacSync.clearPac({ persist: false });
           await pacSync.syncWithPacProvider({ key: 'Антизапрет', ifUnattended: true });
+          logger.resetRuntimeState();
+          errorHandlers.resetRuntimeState();
           await appState.reset();
           return { success: true };
         }

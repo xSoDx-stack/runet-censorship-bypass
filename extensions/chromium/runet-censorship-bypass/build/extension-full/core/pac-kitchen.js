@@ -2,6 +2,7 @@
 
 import { storage } from './storage.js';
 import { utils } from './utils.js';
+import { sanitizeRuleCollections } from './domain-rules.js';
 import {
   buildProxyCredentialsMap,
   commitProxyCredentials,
@@ -211,9 +212,12 @@ export function createPacModifiers(mods = {}) {
       .replace(/#.*$/gm, '')
       .split(/(?:\s*(?:;\r?\n)+\s*|\r?\n+|;\s*)+/g)
       .map((p) => p.trim())
-      .filter((p) => p && /\s+/g.test(p));
+      .filter(Boolean);
     if (self.ifUseSecureProxiesOnly) {
-      customProxyArray = customProxyArray.filter((pStr) => /^HTTPS\s/i.test(pStr));
+      customProxyArray = customProxyArray.filter((pStr) => {
+        const parsed = utils.parseProxyScheme(pStr);
+        return parsed && parsed.type === 'HTTPS';
+      });
     }
   }
 
@@ -228,20 +232,13 @@ export function createPacModifiers(mods = {}) {
 
   // Handle and sanitize protected proxies (strip user:pass@ for PAC compatibility and normalize HTTP -> PROXY)
   customProxyArray = customProxyArray.map((proxyScheme) => {
-    let scheme = proxyScheme;
-    if (scheme.includes('@')) {
-      const proxy = utils.parseProxyScheme(scheme);
-      let proto = proxy.type.toUpperCase();
-      if (proto === 'HTTP') proto = 'PROXY';
-      else if (proto === 'SOCKS4') proto = 'SOCKS';
-      return `${proto} ${proxy.hostname}:${proxy.port || '443'}`;
-    }
-    const parts = scheme.split(/\s+/);
-    if (parts[0] && parts[0].toUpperCase() === 'HTTP') {
-      return `PROXY ${parts.slice(1).join(' ')}`;
-    }
-    return scheme;
-  });
+    const proxy = utils.parseProxyScheme(proxyScheme);
+    if (!proxy) return '';
+    let proto = proxy.type.toUpperCase();
+    if (proto === 'HTTP') proto = 'PROXY';
+    else if (proto === 'SOCKS4') proto = 'SOCKS';
+    return `${proto} ${proxy.hostname}:${proxy.port}`;
+  }).filter(Boolean);
 
   self.filteredCustomsString = '';
   if (customProxyArray.length) {
@@ -272,7 +269,8 @@ export function cookPac(pacData, pacMods) {
   if (!pacData) return '';
   pacData = pacData.replace(new RegExp(KITCHEN_STARTS_MARK + '[\\s\\S]*$', 'g'), '').trim();
 
-  if (pacMods.ifNoMods) {
+  // The default Proxy Or Die policy still requires the safety wrapper.
+  if (pacMods.ifNoMods && pacMods.ifProxyOrDie === false) {
     return pacData;
   }
 
@@ -556,21 +554,13 @@ export const pacKitchen = {
     if (_cachedParsedMods) {
       return _cachedParsedMods;
     }
-    const [rawMods, savedStats] = await Promise.all([
-      storage.get(MODS_KEY, {}),
-      storage.get('pac-exception-stats', null),
-    ]);
+    const rawMods = await storage.get(MODS_KEY, {});
     _cachedRawMods = rawMods;
     const newCredsMap = buildProxyCredentialsMap(rawMods.customProxyStringRaw || '');
     commitProxyCredentials(newCredsMap);
     const [, mods] = createPacModifiers(rawMods);
     _cachedParsedMods = mods || getDefaults();
-    if (savedStats && typeof savedStats === 'object' && savedStats.includedCount !== undefined) {
-      _cachedStats = savedStats;
-    } else {
-      _cachedStats = calculateExceptionStats(rawMods.exceptions, rawMods.whitelist);
-      storage.set('pac-exception-stats', _cachedStats).catch(() => {});
-    }
+    _cachedStats = calculateExceptionStats(rawMods.exceptions, rawMods.whitelist);
     return _cachedParsedMods;
   },
 
@@ -588,6 +578,8 @@ export const pacKitchen = {
    * Validates input, persists all storage items, and ONLY updates RAM caches if storage write succeeds.
    */
   async savePacMods(newMods) {
+    const rules = sanitizeRuleCollections(newMods.exceptions, newMods.whitelist);
+    newMods = Object.assign({}, newMods, rules);
     const [err, parsedMods] = createPacModifiers(newMods);
     if (err) {
       throw err;
@@ -595,11 +587,12 @@ export const pacKitchen = {
     const newStats = calculateExceptionStats(newMods.exceptions, newMods.whitelist);
     const newCredsMap = buildProxyCredentialsMap(newMods.customProxyStringRaw || '');
 
-    // 1. Persist ALL storage records FIRST
-    await Promise.all([
-      storage.set('proxy-credentials-map', newCredsMap),
-      storage.set(MODS_KEY, newMods),
-      storage.set('pac-exception-stats', newStats),
+    // A single canonical snapshot prevents partially committed related keys.
+    // Credentials and statistics are derived into RAM from this object.
+    await storage.set(MODS_KEY, newMods);
+    await Promise.allSettled([
+      storage.remove('proxy-credentials-map'),
+      storage.remove('pac-exception-stats'),
     ]);
 
     // 2. Only on success, publish to in-memory caches

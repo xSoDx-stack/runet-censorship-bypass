@@ -66,6 +66,7 @@ globalThis.chrome = {
 describe('PAC Sync: Pending Request Queue & Concurrency (Item 1)', () => {
   let originalDownload;
   let originalHttpLibGet;
+  let originalApplyPacData;
 
   beforeEach(async () => {
     mockStorage = {};
@@ -75,12 +76,14 @@ describe('PAC Sync: Pending Request Queue & Concurrency (Item 1)', () => {
     await storage.clear();
 
     originalDownload = pacSync.downloadPacFromProvider;
+    originalApplyPacData = pacSync.applyPacData;
     originalHttpLibGet = httpLib.get;
     httpLib.get = async () => 'function FindProxyForURL(url, host) { return "DIRECT"; }';
   });
 
   afterEach(() => {
     pacSync.downloadPacFromProvider = originalDownload;
+    pacSync.applyPacData = originalApplyPacData;
     httpLib.get = originalHttpLibGet;
   });
 
@@ -203,5 +206,52 @@ describe('PAC Sync: Pending Request Queue & Concurrency (Item 1)', () => {
     // Subsequent sync C also works without getting stuck
     await pacSync.syncWithPacProvider({ key: 'onlyOwnSites', ifUnattended: false });
     expect(pacSync.currentPacProviderKey).to.equal('onlyOwnSites');
+  });
+
+  it('5. Reset invalidates an in-flight download before it can apply stale PAC data', async () => {
+    let releaseOldDownload;
+    const oldDownloadGate = new Promise((resolve) => {
+      releaseOldDownload = resolve;
+    });
+
+    pacSync.downloadPacFromProvider = async (provider) => {
+      downloadedUrls.push(provider.distinctKey);
+      if (provider.distinctKey === 'Anticensority') {
+        await oldDownloadGate;
+        return 'function FindProxyForURL() { return "PROXY stale.example:443"; }';
+      }
+      return 'function FindProxyForURL() { return "PROXY fresh.example:443"; }';
+    };
+    const appliedCandidates = [];
+    pacSync.applyPacData = async function(candidate, options) {
+      appliedCandidates.push(candidate);
+      return originalApplyPacData.call(this, candidate, options);
+    };
+
+    const staleCall = pacSync.syncWithPacProvider({
+      key: 'Антицензорити',
+      ifUnattended: false,
+    });
+    pacSync.resetRuntimeState();
+    const freshCall = pacSync.syncWithPacProvider({
+      key: 'Антизапрет',
+      ifUnattended: false,
+    });
+
+    releaseOldDownload();
+
+    let staleError = null;
+    try {
+      await staleCall;
+    } catch (err) {
+      staleError = err;
+    }
+    await freshCall;
+
+    expect(staleError).to.exist;
+    expect(pacSync.currentPacProviderKey).to.equal('Антизапрет');
+    expect(pacSync.rawPacData).to.include('fresh.example:443');
+    expect(appliedCandidates).to.have.lengthOf(1);
+    expect(appliedCandidates[0]).to.include('fresh.example:443');
   });
 });

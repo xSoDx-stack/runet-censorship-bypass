@@ -133,22 +133,20 @@ describe('Proxy Health Check: Concurrency & State Race Protection (P1-1)', () =>
     pacSync.revision = 1;
 
     // 2. Mock fetch: during probe fetch, user changes provider to Anticensority
+    let providerSwitch;
     globalThis.fetch = async () => {
-      // Simulate user switching provider concurrently while probe is running
+      // A real provider switch uses the same global proxy-settings lock.
       pacSync.currentPacProviderKey = 'Антицензорити';
-      pacSync.cookedPacData = 'function FindProxyForURL(url, host) { return "PROXY anticensority:443"; }';
-      pacSync.rawPacData = pacSync.cookedPacData;
-      pacSync.revision = 2;
-      appliedProxyConfigs.push({
-        mode: 'pac_script',
-        pacScript: { data: pacSync.cookedPacData, mandatory: false },
-      });
+      providerSwitch = pacSync.applyPacData(
+        'function FindProxyForURL(url, host) { return "PROXY anticensority:443"; }'
+      );
 
       return { status: 200 };
     };
 
     // 3. Run health check
     const res = await checkProxyHealth('HTTP 1.2.3.4:8080');
+    await providerSwitch;
     expect(res.ok).to.be.true;
 
     // 4. Verify that final applied config is Anticensority and NOT the old Antizapret or probe PAC
@@ -171,6 +169,13 @@ describe('Proxy Health Check: Concurrency & State Race Protection (P1-1)', () =>
     expect(results['HTTPS valid-1.example:443'].ok).to.be.true;
     expect(results).to.have.property('SOCKS5 127.0.0.1:9050');
     expect(results['SOCKS5 127.0.0.1:9050'].ok).to.be.true;
+  });
+
+  it('should reject an unknown proxy protocol without throwing', async () => {
+    const { checkProxyHealth } = await import('../src/extension-common/core/proxy-checker.js');
+    const result = await checkProxyHealth('BANANA proxy.example:1234');
+
+    expect(result).to.deep.equal({ ok: false, error: 'Не указан хост или порт' });
   });
 });
 

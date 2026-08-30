@@ -31,8 +31,9 @@ function getHostAliases(hostname = '') {
 }
 
 export async function initProxyAuth() {
-  const saved = await storage.get('proxy-credentials-map', {});
-  persistentCredentialsMap = Object.assign({}, saved);
+  const mods = await storage.get('pac-kitchen-mods', {});
+  persistentCredentialsMap = buildProxyCredentialsMap(mods.customProxyStringRaw || '');
+  await storage.remove('proxy-credentials-map').catch(() => {});
 }
 
 export function buildProxyCredentialsMap(customProxyStringRaw = '') {
@@ -42,7 +43,7 @@ export function buildProxyCredentialsMap(customProxyStringRaw = '') {
       .replace(/#.*$/gm, '')
       .split(/(?:\s*(?:;\r?\n)+\s*|\r?\n+|;\s*)+/g)
       .map((l) => l.trim())
-      .filter((l) => l && /\s+/g.test(l));
+      .filter(Boolean);
 
     for (const line of lines) {
       const parsed = utils.parseProxyScheme(line);
@@ -75,7 +76,7 @@ export function resetProxyCredentialsState() {
 
 export async function updateProxyCredentialsFromRaw(customProxyStringRaw = '') {
   const newMap = buildProxyCredentialsMap(customProxyStringRaw);
-  await storage.set('proxy-credentials-map', newMap);
+  await storage.remove('proxy-credentials-map').catch(() => {});
   commitProxyCredentials(newMap);
   return getPersistentCredentialsMap();
 }
@@ -204,7 +205,8 @@ export function setupAuthListener() {
       return;
     }
 
-    const requestTries = {};
+    const requestTries = new Map();
+    const AUTH_TRY_TTL_MS = 60_000;
 
     chrome.webRequest.onAuthRequired.addListener(
       (details, asyncCallback) => {
@@ -222,7 +224,16 @@ export function setupAuthListener() {
 
           if (creds && creds.username) {
             const reqId = details.requestId;
-            const tries = requestTries[reqId] || 0;
+            if (requestTries.size > 500) {
+              const cutoff = Date.now() - AUTH_TRY_TTL_MS;
+              for (const [id, state] of requestTries) {
+                if (state.updatedAt < cutoff || requestTries.size > 500) requestTries.delete(id);
+              }
+            }
+            const previous = requestTries.get(reqId);
+            const tries = previous && Date.now() - previous.updatedAt < AUTH_TRY_TTL_MS
+              ? previous.tries
+              : 0;
 
             if (tries >= 3) {
               console.warn(`[Proxy Auth] Max attempts (3) exceeded for ${hostPortKey}`);
@@ -231,7 +242,7 @@ export function setupAuthListener() {
               return resp;
             }
 
-            requestTries[reqId] = tries + 1;
+            requestTries.set(reqId, { tries: tries + 1, updatedAt: Date.now() });
             console.log(`[Proxy Auth] Authenticating proxy ${hostPortKey}`);
             logger.info('auth', 'Аутентификация прокси', `Отправка учётных данных для ${hostPortKey}`);
 
@@ -274,7 +285,7 @@ export function setupAuthListener() {
     );
 
     const cleanup = (details) => {
-      delete requestTries[details.requestId];
+      requestTries.delete(details.requestId);
     };
     chrome.webRequest.onCompleted.addListener(cleanup, { urls: ['<all_urls>'] });
     chrome.webRequest.onErrorOccurred.addListener(cleanup, { urls: ['<all_urls>'] });

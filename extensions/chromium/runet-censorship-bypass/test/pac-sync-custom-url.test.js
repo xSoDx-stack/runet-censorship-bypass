@@ -130,6 +130,9 @@ function FindProxyForURL(url, host) {
       expect(PAC_PROVIDERS.customPacUrl).to.exist;
       expect(PAC_PROVIDERS.customPacUrl.distinctKey).to.equal('customPacUrl');
       expect(PAC_PROVIDERS.customPacUrl.order).to.equal(3);
+      expect(PAC_PROVIDERS.customPacUrl.maxBytes).to.equal(undefined);
+      expect(PAC_PROVIDERS['Антицензорити'].maxBytes).to.be.greaterThan(11642139);
+      expect(PAC_PROVIDERS['Антизапрет'].maxBytes).to.equal(PAC_PROVIDERS['Антицензорити'].maxBytes);
     });
   });
 });

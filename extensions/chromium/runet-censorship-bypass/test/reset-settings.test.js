@@ -5,6 +5,8 @@ import { pacSync } from '../src/extension-common/core/pac-sync.js';
 import { pacKitchen } from '../src/extension-common/core/pac-kitchen.js';
 import { storage } from '../src/extension-common/core/storage.js';
 import { ipToHost } from '../src/extension-common/core/ip-to-host.js';
+import { logger } from '../src/extension-common/core/logger.js';
+import { errorHandlers } from '../src/extension-common/core/error-handlers.js';
 import {
   findCredentials,
   getPersistentCredentialsMap,
@@ -16,7 +18,7 @@ let mockStorage = {};
 globalThis.chrome = {
   runtime: {
     lastError: null,
-    getManifest: () => ({ version: '2.2.19' }),
+      getManifest: () => ({ version: '0.0.0-test' }),
   },
   action: {
     setIcon: () => {},
@@ -77,6 +79,8 @@ describe('Reset Settings & Ghost Data Prevention (Item 2)', () => {
     pacKitchen.invalidateCache();
     resetProxyCredentialsState();
     ipToHost.reset();
+    logger.resetRuntimeState();
+    errorHandlers.resetRuntimeState();
     await storage.clear();
 
     originalDownload = pacSync.downloadPacFromProvider;
@@ -106,6 +110,9 @@ describe('Reset Settings & Ghost Data Prevention (Item 2)', () => {
     pacSync.rawPacData = '/* custom pac */';
     pacSync.cookedPacData = '/* custom cooked pac */';
     await pacSync.persistState();
+    logger.error('system', 'Старая ошибка', 'Должна исчезнуть после сброса');
+    errorHandlers.addError({ type: 'old-error', timestamp: Date.now() });
+    await errorHandlers.setNotificationOption('ext-error', false);
 
     // Verify state was populated
     expect(findCredentials('myproxy.example.com', 443)).to.exist;
@@ -119,6 +126,8 @@ describe('Reset Settings & Ghost Data Prevention (Item 2)', () => {
     ipToHost.reset();
     await pacSync.clearPac({ persist: false });
     await pacSync.syncWithPacProvider({ key: 'Антизапрет', ifUnattended: true });
+    logger.resetRuntimeState();
+    errorHandlers.resetRuntimeState();
 
     // 3. Verify ALL storage is clean and restored to defaults
     const stateAfter = pacSync.getState();
@@ -142,5 +151,9 @@ describe('Reset Settings & Ghost Data Prevention (Item 2)', () => {
     expect(rawStorage).to.exist;
     expect(rawStorage.currentPacProviderKey).to.equal('Антизапрет');
     expect(rawStorage.customPacUrl).to.equal('');
+
+    expect(logger.getLogs()).to.deep.equal([]);
+    expect(errorHandlers.getLastErrors()).to.deep.equal([]);
+    expect(errorHandlers.notificationsEnabled['ext-error']).to.equal(true);
   });
 });

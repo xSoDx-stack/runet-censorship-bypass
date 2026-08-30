@@ -5,6 +5,7 @@ import { registerTemporaryCredentials, unregisterTemporaryCredentials } from './
 import { logger } from './logger.js';
 import { pacSync } from './pac-sync.js';
 import { pacKitchen } from './pac-kitchen.js';
+import { withProxySettingsLock } from './proxy-settings-lock.js';
 
 // Mutex queue to serialize health check probes and prevent race conditions on chrome.proxy.settings
 let checkQueue = Promise.resolve();
@@ -43,7 +44,7 @@ FindProxyForURL = function(url, host) {
  * requests to the active PAC script and ensuring zero secret/password leakage into diagnostic logs.
  */
 export function checkProxyHealth(proxyString) {
-  const run = () => executeSingleProxyHealthCheck(proxyString);
+  const run = () => withProxySettingsLock(() => executeSingleProxyHealthCheck(proxyString));
   const resultPromise = checkQueue.then(run, run);
   checkQueue = resultPromise.catch(() => {});
   return resultPromise;
@@ -75,7 +76,7 @@ async function executeSingleProxyHealthCheck(proxyString) {
   }
 
   const parsed = utils.parseProxyScheme(proxyString);
-  if (!parsed.hostname || !parsed.port) {
+  if (!parsed || !parsed.hostname || !parsed.port) {
     logger.warn('proxy', 'Проверка прокси: неверный формат', 'Не указан хост или порт для проверяемого прокси');
     return { ok: false, error: 'Не указан хост или порт' };
   }
@@ -140,17 +141,27 @@ async function executeSingleProxyHealthCheck(proxyString) {
   // 4. Construct layered Test PAC via generateHealthCheckPac
   const testPac = generateHealthCheckPac(basePacScript, testProxyScheme);
 
+  const activeMods = await pacKitchen.getPacMods();
   const testConfig = {
     mode: 'pac_script',
     pacScript: {
       data: testPac,
-      mandatory: false,
+      mandatory: activeMods.ifProxyOrDie !== false,
     },
   };
 
-  const revisionBefore = pacSync.getRevision();
   const startTime = Date.now();
   let result = null;
+  let restorationError = null;
+  const previousConfig = await new Promise((resolve, reject) => {
+    chrome.proxy.settings.get({}, (details) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve(details && details.value ? details.value : null);
+    });
+  });
 
   try {
     // Apply layered test proxy configuration
@@ -215,15 +226,30 @@ async function executeSingleProxyHealthCheck(proxyString) {
     // 5. Guaranteed cleanup of temporary credentials in memory
     unregisterTemporaryCredentials(parsed.hostname, parsed.port);
 
-    // 6. Restore active PAC safely: reapply current authoritative state if revision hasn't changed
-    if (pacSync.getRevision() === revisionBefore) {
-      try {
-        await pacSync.reapplyCurrentPac();
-      } catch (restoreErr) {
-        console.warn('Failed to restore active PAC after health check:', restoreErr);
-      }
+    // 6. Restore exactly what was active before the probe. Permanent proxy
+    // changes wait on the same lock and will run immediately afterwards.
+    try {
+      await new Promise((resolve, reject) => {
+        const callback = () => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
+          }
+          resolve();
+        };
+        if (previousConfig) {
+          chrome.proxy.settings.set({ value: previousConfig, scope: 'regular' }, callback);
+        } else {
+          chrome.proxy.settings.clear({ scope: 'regular' }, callback);
+        }
+      });
+    } catch (restoreErr) {
+      const msg = `Не удалось восстановить настройки прокси после проверки: ${restoreErr.message || restoreErr}`;
+      logger.error('proxy', 'Критическая ошибка восстановления прокси', msg);
+      restorationError = new Error(msg);
     }
   }
 
+  if (restorationError) throw restorationError;
   return result || { ok: false, error: 'Неизвестная ошибка проверки' };
 }

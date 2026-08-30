@@ -16,7 +16,7 @@ const commonSrc = [
 const fullDst = './build/extension-full';
 
 const copyFull = function() {
-  return gulp.src(commonSrc)
+  return gulp.src(commonSrc, { encoding: false })
     .pipe(gulp.dest(fullDst));
 };
 

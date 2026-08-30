@@ -1,6 +1,7 @@
 'use strict';
 
 import { expect } from 'chai';
+import fs from 'node:fs';
 
 describe('UI Safety & DOM Injection Resistance (Task 7.2)', () => {
   // Simulate DOM environment for Node.js test
@@ -72,5 +73,12 @@ describe('UI Safety & DOM Injection Resistance (Task 7.2)', () => {
 
     expect(addrSpan.textContent).to.equal(complexPayload);
     expect(addrSpan.title).to.equal(complexPayload);
+  });
+
+  it('loads the exceptions application as an ES module', () => {
+    const htmlUrl = new URL('../src/extension-common/pages/exceptions/index.html', import.meta.url);
+    const html = fs.readFileSync(htmlUrl, 'utf8');
+
+    expect(html).to.match(/<script\s+type="module"\s+src="index\.js"><\/script>/);
   });
 });
