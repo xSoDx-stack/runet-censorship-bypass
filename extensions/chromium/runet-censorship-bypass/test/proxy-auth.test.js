@@ -9,8 +9,11 @@ import {
   findCredentials,
   getPersistentCredentialsMap,
   getTemporaryCredentialsMap,
+  setupAuthListener,
 } from '../src/extension-common/core/proxy-auth.js';
 import { storage } from '../src/extension-common/core/storage.js';
+import { appState } from '../src/extension-common/core/app-state.js';
+import { logger } from '../src/extension-common/core/logger.js';
 
 // Mock chrome storage for node test environment
 let mockStorage = {};
@@ -170,5 +173,67 @@ describe('Proxy Authentication: Separate Temporary & Persistent Credentials', ()
     const creds = findCredentials('persisted.local', 8080);
     expect(creds).to.exist;
     expect(creds.username).to.equal('storedUser');
+  });
+
+  it('should not expose proxy endpoints in authentication logs', () => {
+    const sensitiveHost = 'sensitive.proxy.internal';
+    const originalWebRequest = chrome.webRequest;
+    const originalIsInitialized = appState.isInitialized;
+    const originalConsoleLog = console.log;
+    const originalConsoleWarn = console.warn;
+    const originalLoggerInfo = logger.info;
+    const captured = { log: [], warn: [], info: [] };
+    let authListener;
+
+    chrome.webRequest = {
+      onAuthRequired: {
+        hasListeners: () => false,
+        addListener: (listener) => {
+          authListener = listener;
+        },
+      },
+      onCompleted: { addListener: () => {} },
+      onErrorOccurred: { addListener: () => {} },
+    };
+    console.log = (...args) => captured.log.push(args.join(' '));
+    console.warn = (...args) => captured.warn.push(args.join(' '));
+    logger.info = (...args) => captured.info.push(args.join(' '));
+    appState.isInitialized = true;
+    registerTemporaryCredentials(sensitiveHost, 8443, 'user', 'password');
+
+    try {
+      setupAuthListener();
+      const details = {
+        isProxy: true,
+        challenger: { host: sensitiveHost, port: 8443 },
+        requestId: 'sensitive-request',
+      };
+
+      authListener(details);
+      authListener(details);
+      authListener(details);
+      authListener(details);
+      authListener({
+        isProxy: true,
+        challenger: { host: 'unknown.proxy.internal', port: 9443 },
+        requestId: 'unknown-request',
+      });
+
+      expect(captured.log).to.include('[Proxy Auth] Authenticating proxy');
+      expect(captured.warn).to.include('[Proxy Auth] Max attempts (3) exceeded');
+      expect(captured.warn).to.include('[Proxy Auth] No credentials found');
+      expect(captured.info).to.include('auth Аутентификация прокси Отправка учётных данных');
+
+      const allLogs = [...captured.log, ...captured.warn, ...captured.info].join('\n');
+      expect(allLogs).to.not.include(sensitiveHost);
+      expect(allLogs).to.not.include('unknown.proxy.internal');
+    } finally {
+      unregisterTemporaryCredentials();
+      chrome.webRequest = originalWebRequest;
+      appState.isInitialized = originalIsInitialized;
+      console.log = originalConsoleLog;
+      console.warn = originalConsoleWarn;
+      logger.info = originalLoggerInfo;
+    }
   });
 });

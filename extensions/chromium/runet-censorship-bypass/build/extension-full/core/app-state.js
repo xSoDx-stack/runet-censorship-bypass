@@ -44,7 +44,7 @@ class AppStateManager {
           this.isInitialized = true;
         } catch (err) {
           console.error('[AppState] Service Worker initialization error:', err);
-          this._initPromise = null; // Reset so subsequent events can retry
+          this.isInitialized = false;
           throw err;
         }
       })();

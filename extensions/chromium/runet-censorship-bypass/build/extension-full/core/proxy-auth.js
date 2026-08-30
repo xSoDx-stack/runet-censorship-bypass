@@ -218,8 +218,6 @@ export function setupAuthListener() {
         const handleAuth = () => {
           const host = details.challenger.host;
           const port = details.challenger.port;
-          const hostPortKey = `${host}:${port}`;
-
           const creds = findCredentials(host, port);
 
           if (creds && creds.username) {
@@ -236,15 +234,15 @@ export function setupAuthListener() {
               : 0;
 
             if (tries >= 3) {
-              console.warn(`[Proxy Auth] Max attempts (3) exceeded for ${hostPortKey}`);
+              console.warn('[Proxy Auth] Max attempts (3) exceeded');
               const resp = { cancel: true };
               if (asyncCallback) asyncCallback(resp);
               return resp;
             }
 
             requestTries.set(reqId, { tries: tries + 1, updatedAt: Date.now() });
-            console.log(`[Proxy Auth] Authenticating proxy ${hostPortKey}`);
-            logger.info('auth', 'Аутентификация прокси', `Отправка учётных данных для ${hostPortKey}`);
+            console.log('[Proxy Auth] Authenticating proxy');
+            logger.info('auth', 'Аутентификация прокси', 'Отправка учётных данных');
 
             const resp = {
               authCredentials: {
@@ -256,7 +254,7 @@ export function setupAuthListener() {
             return resp;
           }
 
-          console.warn(`[Proxy Auth] No credentials found for ${hostPortKey}`);
+          console.warn('[Proxy Auth] No credentials found');
           const resp = {};
           if (asyncCallback) asyncCallback(resp);
           return resp;
