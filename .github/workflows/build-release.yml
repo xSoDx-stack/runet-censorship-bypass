@@ -3,32 +3,51 @@ name: Build and Release AntiCheburnet
 on:
   push:
     branches:
-      - main
       - development
     tags:
       - 'v*'
+  pull_request:
+    branches:
+      - development
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: anticheburnet-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
-    name: Lint, Test, Build & Release
-    runs-on: ubuntu-latest
+  verify:
+    name: Lint, Test, Browser Smoke & Build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js 22.x
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: extensions/chromium/runet-censorship-bypass/package-lock.json
 
-      - name: Install dependencies
+      - name: Install locked dependencies
         working-directory: extensions/chromium/runet-censorship-bypass
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
+
+      - name: Verify registry signatures
+        working-directory: extensions/chromium/runet-censorship-bypass
+        run: npm audit signatures
+
+      - name: Audit dependencies
+        working-directory: extensions/chromium/runet-censorship-bypass
+        run: npm audit --audit-level=high --no-fund
 
       - name: Verify project version is synchronized
         run: npm run version:check
@@ -45,35 +64,82 @@ jobs:
         working-directory: extensions/chromium/runet-censorship-bypass
         run: npm run release
 
-      - name: Extract version from manifest.json
-        id: get_version
-        run: |
-          VERSION=$(node -p "require('./extensions/chromium/runet-censorship-bypass/build/extension-full/manifest.json').version")
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
-          echo "Extracted version: $VERSION"
+      - name: Run Chrome Stable MV3 browser smoke
+        working-directory: extensions/chromium/runet-censorship-bypass
+        env:
+          CHROME_BIN: /usr/bin/google-chrome
+        run: npm run test:browser:chrome
 
-      - name: Create ZIP archive for Chrome Web Store
+      - name: Verify generated build is committed and current
+        run: git diff --exit-code
+
+      - name: Extract extension version
+        shell: bash
+        run: |
+          version=$(node -p "require('./extensions/chromium/runet-censorship-bypass/build/extension-full/manifest.json').version")
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Create Chrome Web Store archive
+        shell: bash
         run: |
           cd extensions/chromium/runet-censorship-bypass/build/extension-full
-          zip -r "$GITHUB_WORKSPACE/anticheburnet-v${{ env.VERSION }}-chrome-mv3.zip" .
-          cd "$GITHUB_WORKSPACE"
-          ls -la
+          zip -r "$GITHUB_WORKSPACE/anticheburnet-v${VERSION}-chrome-mv3.zip" .
 
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+      - name: Upload verified artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: anticheburnet-v${{ env.VERSION }}-chrome-mv3
           path: anticheburnet-v${{ env.VERSION }}-chrome-mv3.zip
+          if-no-files-found: error
           retention-days: 30
 
-      - name: Publish GitHub Release
-        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/development' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-        uses: softprops/action-gh-release@v2
+  release:
+    name: Publish GitHub Release
+    needs: verify
+    if: >-
+      github.ref == 'refs/heads/development' ||
+      startsWith(github.ref, 'refs/tags/v') ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          name: "АнтиЧебурнет v${{ env.VERSION }}"
-          tag_name: "v${{ env.VERSION }}"
-          draft: false
-          prerelease: false
-          generate_release_notes: true
-          files: |
-            anticheburnet-v${{ env.VERSION }}-chrome-mv3.zip
+          persist-credentials: false
+
+      - name: Setup Node.js 22.x
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: extensions/chromium/runet-censorship-bypass/package-lock.json
+
+      - name: Install locked dependencies
+        working-directory: extensions/chromium/runet-censorship-bypass
+        run: npm ci --no-audit --no-fund
+
+      - name: Build release archive
+        shell: bash
+        run: |
+          npm --prefix extensions/chromium/runet-censorship-bypass run release
+          version=$(node -p "require('./extensions/chromium/runet-censorship-bypass/build/extension-full/manifest.json').version")
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          cd extensions/chromium/runet-censorship-bypass/build/extension-full
+          zip -r "$GITHUB_WORKSPACE/anticheburnet-v${version}-chrome-mv3.zip" .
+
+      - name: Create or update GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v${VERSION}"
+          archive="anticheburnet-v${VERSION}-chrome-mv3.zip"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$archive" --clobber
+          else
+            gh release create "$tag" "$archive" --generate-notes --title "АнтиЧебурнет v${VERSION}"
+          fi

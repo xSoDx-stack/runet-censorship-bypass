@@ -10,7 +10,7 @@ import { checkProxyHealth } from './proxy-checker.js';
 import { logger } from './logger.js';
 import { formatErrorMessage } from './errors-lib.js';
 import { ipToHost } from './ip-to-host.js';
-import { resetProxyCredentialsState } from './proxy-auth.js';
+import { clearProxyAuthAttempts, resetProxyCredentialsState } from './proxy-auth.js';
 
 const FALLBACK_CONNECTION_TEST_URL = PAC_PROVIDERS['Антизапрет'].pacUrls[0];
 
@@ -295,6 +295,7 @@ export function setupMessageBus() {
           await storage.clear();
           pacKitchen.invalidateCache();
           resetProxyCredentialsState();
+          await clearProxyAuthAttempts();
           ipToHost.reset();
           await pacSync.clearPac({ persist: false });
           await pacSync.syncWithPacProvider({ key: 'Антизапрет', ifUnattended: true });

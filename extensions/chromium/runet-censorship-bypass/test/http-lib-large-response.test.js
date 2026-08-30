@@ -117,4 +117,59 @@ describe('HTTP library large PAC streaming', () => {
     expect(error).to.exist;
     expect(error.message).to.include('404');
   });
+
+  it('rejects malformed UTF-8 instead of silently replacing invalid bytes', async () => {
+    globalThis.fetch = async () => ({
+      status: 200,
+      url: 'https://trusted.example/proxy.pac',
+      headers: { get: () => null },
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array([0x66, 0x6f, 0x80, 0x6f]));
+          controller.close();
+        },
+      }),
+    });
+
+    let error = null;
+    try {
+      await httpLib.get('https://trusted.example/proxy.pac');
+    } catch (err) {
+      error = err;
+    }
+
+    expect(error).to.exist;
+    expect(error.message).to.include('UTF-8');
+  });
+
+  it('validates the effective response URL after redirects before reading the body', async () => {
+    globalThis.fetch = async () => ({
+      status: 200,
+      url: 'http://public.example/proxy.pac',
+      headers: { get: () => null },
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('function FindProxyForURL() {}'));
+          controller.close();
+        },
+      }),
+    });
+
+    let validatedUrl = '';
+    let error = null;
+    try {
+      await httpLib.get('https://trusted.example/proxy.pac', {
+        validateFinalUrl: (finalUrl) => {
+          validatedUrl = finalUrl;
+          return { valid: false, error: 'redirect blocked' };
+        },
+      });
+    } catch (err) {
+      error = err;
+    }
+
+    expect(validatedUrl).to.equal('http://public.example/proxy.pac');
+    expect(error).to.exist;
+    expect(error.message).to.include('redirect blocked');
+  });
 });

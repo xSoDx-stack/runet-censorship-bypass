@@ -294,6 +294,39 @@ export const utils = {
     };
   },
 
+  /**
+   * Revalidates the effective PAC response URL after Fetch redirects.
+   * Direct private/local HTTP PAC URLs remain supported, while an HTTPS
+   * request is never allowed to downgrade to HTTP during a redirect.
+   *
+   * @param {string} requestedUrl originally requested PAC URL
+   * @param {string} finalUrl effective Response.url after redirects
+   * @returns {{valid: boolean, error?: string, sanitizedUrl?: string}}
+   */
+  validatePacResponseUrl(requestedUrl, finalUrl) {
+    const requested = this.validatePacUrl(requestedUrl);
+    if (!requested.valid) return requested;
+
+    const effective = this.validatePacUrl(finalUrl);
+    if (!effective.valid) {
+      return {
+        valid: false,
+        error: `Перенаправление PAC заблокировано: ${effective.error}`,
+      };
+    }
+
+    const requestedProtocol = new URL(requested.sanitizedUrl).protocol;
+    const finalProtocol = new URL(effective.sanitizedUrl).protocol;
+    if (requestedProtocol === 'https:' && finalProtocol !== 'https:') {
+      return {
+        valid: false,
+        error: 'Перенаправление PAC с HTTPS на небезопасный HTTP заблокировано.',
+      };
+    }
+
+    return effective;
+  },
+
   errors: {
     handleResponseError(res) {
       return new Error(`Response error: HTTP ${res.status}`);

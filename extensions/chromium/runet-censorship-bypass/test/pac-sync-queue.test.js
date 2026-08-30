@@ -72,6 +72,26 @@ describe('PAC Sync: Pending Request Queue & Concurrency (Item 1)', () => {
     mockStorage = {};
     appliedProxyConfigs = [];
     downloadedUrls = [];
+    globalThis.chrome.proxy = {
+      settings: {
+        get: (opts, cb) => {
+          if (cb) {
+            cb({
+              levelOfControl: 'controlled_by_this_extension',
+              value: appliedProxyConfigs[appliedProxyConfigs.length - 1] || {},
+            });
+          }
+        },
+        set: (opts, cb) => {
+          appliedProxyConfigs.push(opts.value);
+          if (cb) cb();
+        },
+        clear: (opts, cb) => {
+          appliedProxyConfigs.push({ mode: 'direct' });
+          if (cb) cb();
+        },
+      },
+    };
     pacSync.resetRuntimeState();
     await storage.clear();
 

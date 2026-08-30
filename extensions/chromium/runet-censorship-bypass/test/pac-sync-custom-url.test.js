@@ -96,6 +96,30 @@ describe('Custom PAC URL Pipeline and Validation', () => {
       expect(utils.validatePacUrl('not a url').valid).to.be.false;
       expect(utils.validatePacUrl(null).valid).to.be.false;
     });
+
+    it('should revalidate redirect targets and block HTTPS downgrade', () => {
+      expect(utils.validatePacResponseUrl(
+        'https://example.com/proxy.pac',
+        'https://cdn.example.com/proxy.pac'
+      ).valid).to.be.true;
+
+      const downgrade = utils.validatePacResponseUrl(
+        'https://example.com/proxy.pac',
+        'http://127.0.0.1/proxy.pac'
+      );
+      expect(downgrade.valid).to.be.false;
+      expect(downgrade.error).to.include('HTTPS');
+
+      expect(utils.validatePacResponseUrl(
+        'http://192.168.1.10/proxy.pac',
+        'http://192.168.1.11/proxy.pac'
+      ).valid).to.be.true;
+
+      expect(utils.validatePacResponseUrl(
+        'http://192.168.1.10/proxy.pac',
+        'http://public.example/proxy.pac'
+      ).valid).to.be.false;
+    });
   });
 
   describe('PAC Pipeline Integration: Cooking & User Exceptions', () => {

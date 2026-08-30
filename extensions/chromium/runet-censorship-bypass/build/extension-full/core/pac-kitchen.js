@@ -5,7 +5,9 @@ import { utils } from './utils.js';
 import { sanitizeRuleCollections } from './domain-rules.js';
 import {
   buildProxyCredentialsMap,
+  clearProxyAuthAttempts,
   commitProxyCredentials,
+  getPersistentCredentialsMap,
   setupAuthListener,
   initProxyAuth,
 } from './proxy-auth.js';
@@ -586,6 +588,8 @@ export const pacKitchen = {
     }
     const newStats = calculateExceptionStats(newMods.exceptions, newMods.whitelist);
     const newCredsMap = buildProxyCredentialsMap(newMods.customProxyStringRaw || '');
+    const oldCredsMap = getPersistentCredentialsMap();
+    const credentialsChanged = JSON.stringify(oldCredsMap) !== JSON.stringify(newCredsMap);
 
     // A single canonical snapshot prevents partially committed related keys.
     // Credentials and statistics are derived into RAM from this object.
@@ -600,6 +604,11 @@ export const pacKitchen = {
     _cachedParsedMods = parsedMods;
     _cachedStats = newStats;
     commitProxyCredentials(newCredsMap);
+    if (credentialsChanged) {
+      await clearProxyAuthAttempts().catch((err) => {
+        console.warn('[Proxy Auth] Failed to clear retry state after credentials update:', err);
+      });
+    }
 
     return parsedMods;
   },

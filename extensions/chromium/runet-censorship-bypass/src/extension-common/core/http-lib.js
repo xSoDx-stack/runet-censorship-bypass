@@ -5,6 +5,14 @@ import { clarify, Warning } from './errors-lib.js';
 const checkCon = 'Что-то не так с сетью, проверьте соединение.';
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024; // 2 MB
 
+function decodeUtf8(decoder, value, options) {
+  try {
+    return decoder.decode(value, options);
+  } catch (err) {
+    throw clarify(err, 'Ответ сервера содержит некорректные данные UTF-8.');
+  }
+}
+
 export const httpLib = {
   async ifModifiedSince(url, lastModified, { timeoutMs = 10000 } = {}) {
     if (url.startsWith('data:')) {
@@ -47,7 +55,11 @@ export const httpLib = {
     }
   },
 
-  async get(url, { timeoutMs = 15000, maxBytes = DEFAULT_MAX_BYTES } = {}) {
+  async get(url, {
+    timeoutMs = 15000,
+    maxBytes = DEFAULT_MAX_BYTES,
+    validateFinalUrl = null,
+  } = {}) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -56,6 +68,16 @@ export const httpLib = {
         cache: 'no-store',
         signal: controller.signal,
       });
+
+      if (typeof validateFinalUrl === 'function') {
+        const validation = await validateFinalUrl(res.url || url, url);
+        if (validation === false || (validation && validation.valid === false)) {
+          const validationMessage = validation && validation.error
+            ? validation.error
+            : 'Конечный адрес ответа не прошёл проверку безопасности.';
+          throw clarify(new Error(validationMessage), validationMessage);
+        }
+      }
 
       const status = res.status;
       if (!( (status >= 200 && status < 300) || status === 304 )) {
@@ -82,7 +104,7 @@ export const httpLib = {
 
       if (res.body && typeof res.body.getReader === 'function') {
         const reader = res.body.getReader();
-        const decoder = new TextDecoder('utf-8');
+        const decoder = new TextDecoder('utf-8', { fatal: true });
         let receivedBytes = 0;
         const textChunks = [];
 
@@ -103,12 +125,25 @@ export const httpLib = {
               `Размер ответа превышает допустимый лимит (${formatLimit(maxBytes)}).`
             );
           }
-          textChunks.push(decoder.decode(value, { stream: true }));
+          textChunks.push(decodeUtf8(decoder, value, { stream: true }));
         }
-        textChunks.push(decoder.decode());
+        textChunks.push(decodeUtf8(decoder));
         return textChunks.join('');
       }
 
+      if (typeof res.arrayBuffer === 'function') {
+        const buffer = await res.arrayBuffer();
+        if (buffer.byteLength > maxBytes) {
+          throw clarify(
+            new Error('Response body too large'),
+            `Размер ответа превышает допустимый лимит (${formatLimit(maxBytes)}).`
+          );
+        }
+        return decodeUtf8(new TextDecoder('utf-8', { fatal: true }), buffer);
+      }
+
+      // Compatibility fallback for lightweight Response mocks. Native Fetch
+      // responses expose body/arrayBuffer and therefore always use strict UTF-8.
       const text = await res.text();
       const textBytes = text ? new TextEncoder().encode(text).byteLength : 0;
       if (textBytes > maxBytes) {

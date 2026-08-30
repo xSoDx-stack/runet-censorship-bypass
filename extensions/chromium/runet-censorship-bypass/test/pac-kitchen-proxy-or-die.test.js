@@ -189,10 +189,12 @@ function FindProxyForURL(url, host) {
   describe('Browser-Level PAC mandatory setting (Task 1)', () => {
     let appliedProxyConfigs = [];
     let savedStorage = {};
+    let controlLevel = 'controlled_by_this_extension';
 
     beforeEach(() => {
       appliedProxyConfigs = [];
       savedStorage = {};
+      controlLevel = 'controlled_by_this_extension';
       globalThis.chrome = {
         runtime: { lastError: null },
         action: {
@@ -206,7 +208,7 @@ function FindProxyForURL(url, host) {
             get: (opts, cb) => {
               if (cb) {
                 cb({
-                  levelOfControl: 'controlled_by_this_extension',
+                  levelOfControl: controlLevel,
                   value: appliedProxyConfigs[appliedProxyConfigs.length - 1] || {},
                 });
               }
@@ -290,6 +292,25 @@ function FindProxyForURL(url, host) {
       await pacKitchen.savePacMods({ ifProxyOrDie: true });
       await pacSync.reapplyCurrentPac();
       expect(appliedProxyConfigs[appliedProxyConfigs.length - 1].pacScript.mandatory).to.be.true;
+    });
+
+    it('4. Refuses to overwrite proxy settings controlled by another extension', async () => {
+      const { pacSync } = await import('../src/extension-common/core/pac-sync.js');
+      const { pacKitchen } = await import('../src/extension-common/core/pac-kitchen.js');
+
+      await pacKitchen.savePacMods({ ifProxyOrDie: true });
+      controlLevel = 'controlled_by_other_extensions';
+
+      let error = null;
+      try {
+        await pacSync.applyPacData('function FindProxyForURL(url, host) { return "DIRECT"; }');
+      } catch (err) {
+        error = err;
+      }
+
+      expect(error).to.exist;
+      expect(error.code).to.equal('PROXY_NOT_CONTROLLABLE');
+      expect(appliedProxyConfigs).to.have.lengthOf(0);
     });
   });
 

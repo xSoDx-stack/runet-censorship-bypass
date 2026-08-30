@@ -17,6 +17,125 @@ let persistentCredentialsMap = {};
 // Temporary credentials map (in-memory only, never saved to storage, cleaned up after health check): "host:port" / "host" -> { username, password }
 let temporaryCredentialsMap = {};
 
+const AUTH_ATTEMPTS_KEY = 'proxy-auth-attempts';
+const AUTH_TRY_TTL_MS = 60_000;
+const MAX_AUTH_TRIES = 3;
+const MAX_TRACKED_REQUESTS = 500;
+let authAttemptsQueue = Promise.resolve();
+const memoryAuthAttempts = new Map();
+
+function getSessionStorageArea() {
+  if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.session) {
+    return null;
+  }
+  return chrome.storage.session;
+}
+
+function callSessionStorage(method, ...args) {
+  const area = getSessionStorageArea();
+  if (!area || typeof area[method] !== 'function') {
+    return Promise.resolve(null);
+  }
+  return new Promise((resolve, reject) => {
+    area[method](...args, (result) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve(result);
+    });
+  });
+}
+
+function withAuthAttemptsLock(task) {
+  const next = authAttemptsQueue.then(task, task);
+  authAttemptsQueue = next.catch(() => {});
+  return next;
+}
+
+function normalizeAuthAttempts(raw, now = Date.now()) {
+  const normalized = {};
+  if (!raw || typeof raw !== 'object') return normalized;
+
+  const recent = Object.entries(raw)
+    .filter(([, state]) => state && Number.isInteger(state.tries) &&
+      state.tries > 0 && Number.isFinite(state.updatedAt) &&
+      now - state.updatedAt < AUTH_TRY_TTL_MS)
+    .sort((a, b) => b[1].updatedAt - a[1].updatedAt)
+    .slice(0, MAX_TRACKED_REQUESTS);
+
+  for (const [key, state] of recent) {
+    normalized[key] = { tries: state.tries, updatedAt: state.updatedAt };
+  }
+  return normalized;
+}
+
+/**
+ * Atomically consumes an authentication attempt for a request. The state is
+ * kept in chrome.storage.session so it survives MV3 service-worker restarts,
+ * while containing no proxy endpoint or credential data.
+ *
+ * @param {string|number} requestId Chrome webRequest request identifier
+ * @param {number} [now=Date.now()] current time, injectable for tests
+ * @returns {Promise<{allowed: boolean, tries: number}>}
+ */
+export function consumeProxyAuthAttempt(requestId, now = Date.now()) {
+  return withAuthAttemptsLock(async () => {
+    const storageArea = getSessionStorageArea();
+    const key = `request:${String(requestId || '')}`;
+
+    if (!storageArea) {
+      const previous = memoryAuthAttempts.get(key);
+      const tries = previous && now - previous.updatedAt < AUTH_TRY_TTL_MS
+        ? previous.tries
+        : 0;
+      if (tries >= MAX_AUTH_TRIES) return { allowed: false, tries };
+      memoryAuthAttempts.set(key, { tries: tries + 1, updatedAt: now });
+      return { allowed: true, tries: tries + 1 };
+    }
+
+    const stored = await callSessionStorage('get', AUTH_ATTEMPTS_KEY);
+    const attempts = normalizeAuthAttempts(stored && stored[AUTH_ATTEMPTS_KEY], now);
+    const tries = attempts[key] ? attempts[key].tries : 0;
+    if (tries >= MAX_AUTH_TRIES) return { allowed: false, tries };
+
+    attempts[key] = { tries: tries + 1, updatedAt: now };
+    await callSessionStorage('set', { [AUTH_ATTEMPTS_KEY]: attempts });
+    return { allowed: true, tries: tries + 1 };
+  });
+}
+
+/**
+ * Clears durable authentication retry state for one completed request or for
+ * the entire browser session after credentials/configuration change.
+ *
+ * @param {string|number|null} [requestId=null]
+ * @returns {Promise<void>}
+ */
+export function clearProxyAuthAttempts(requestId = null) {
+  return withAuthAttemptsLock(async () => {
+    const storageArea = getSessionStorageArea();
+    if (requestId === null || requestId === undefined) {
+      memoryAuthAttempts.clear();
+      if (storageArea) await callSessionStorage('remove', AUTH_ATTEMPTS_KEY);
+      return;
+    }
+
+    const key = `request:${String(requestId)}`;
+    memoryAuthAttempts.delete(key);
+    if (!storageArea) return;
+
+    const stored = await callSessionStorage('get', AUTH_ATTEMPTS_KEY);
+    const attempts = normalizeAuthAttempts(stored && stored[AUTH_ATTEMPTS_KEY]);
+    delete attempts[key];
+    if (Object.keys(attempts).length) {
+      await callSessionStorage('set', { [AUTH_ATTEMPTS_KEY]: attempts });
+    } else {
+      await callSessionStorage('remove', AUTH_ATTEMPTS_KEY);
+    }
+  });
+}
+
 function isLoopbackHost(host = '') {
   const h = (host || '').toLowerCase().trim();
   return h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '[::1]' || h === '0.0.0.0';
@@ -72,11 +191,15 @@ export function commitProxyCredentials(newMap) {
 export function resetProxyCredentialsState() {
   persistentCredentialsMap = {};
   temporaryCredentialsMap = {};
+  clearProxyAuthAttempts().catch((err) => {
+    console.warn('[Proxy Auth] Failed to clear retry state:', err);
+  });
 }
 
 export async function updateProxyCredentialsFromRaw(customProxyStringRaw = '') {
   const newMap = buildProxyCredentialsMap(customProxyStringRaw);
   await storage.remove('proxy-credentials-map').catch(() => {});
+  await clearProxyAuthAttempts();
   commitProxyCredentials(newMap);
   return getPersistentCredentialsMap();
 }
@@ -206,7 +329,6 @@ export function setupAuthListener() {
     }
 
     const requestTries = new Map();
-    const AUTH_TRY_TTL_MS = 60_000;
 
     chrome.webRequest.onAuthRequired.addListener(
       (details, asyncCallback) => {
@@ -215,68 +337,98 @@ export function setupAuthListener() {
           return {};
         }
 
-        const handleAuth = () => {
+        const handleAuth = async (useDurableAttempts) => {
           const host = details.challenger.host;
           const port = details.challenger.port;
           const creds = findCredentials(host, port);
 
           if (creds && creds.username) {
             const reqId = details.requestId;
-            if (requestTries.size > 500) {
-              const cutoff = Date.now() - AUTH_TRY_TTL_MS;
-              for (const [id, state] of requestTries) {
-                if (state.updatedAt < cutoff || requestTries.size > 500) requestTries.delete(id);
+            if (useDurableAttempts) {
+              const attempt = await consumeProxyAuthAttempt(reqId);
+              if (!attempt.allowed) {
+                console.warn('[Proxy Auth] Max attempts (3) exceeded');
+                return { cancel: true };
               }
+            } else {
+              if (requestTries.size > MAX_TRACKED_REQUESTS) {
+                const cutoff = Date.now() - AUTH_TRY_TTL_MS;
+                for (const [id, state] of requestTries) {
+                  if (state.updatedAt < cutoff || requestTries.size > MAX_TRACKED_REQUESTS) {
+                    requestTries.delete(id);
+                  }
+                }
+              }
+              const previous = requestTries.get(reqId);
+              const tries = previous && Date.now() - previous.updatedAt < AUTH_TRY_TTL_MS
+                ? previous.tries
+                : 0;
+              if (tries >= MAX_AUTH_TRIES) {
+                console.warn('[Proxy Auth] Max attempts (3) exceeded');
+                return { cancel: true };
+              }
+              requestTries.set(reqId, { tries: tries + 1, updatedAt: Date.now() });
             }
-            const previous = requestTries.get(reqId);
-            const tries = previous && Date.now() - previous.updatedAt < AUTH_TRY_TTL_MS
-              ? previous.tries
-              : 0;
 
-            if (tries >= 3) {
-              console.warn('[Proxy Auth] Max attempts (3) exceeded');
-              const resp = { cancel: true };
-              if (asyncCallback) asyncCallback(resp);
-              return resp;
-            }
-
-            requestTries.set(reqId, { tries: tries + 1, updatedAt: Date.now() });
             console.log('[Proxy Auth] Authenticating proxy');
             logger.info('auth', 'Аутентификация прокси', 'Отправка учётных данных');
 
-            const resp = {
+            return {
               authCredentials: {
                 username: String(creds.username),
                 password: String(creds.password || ''),
               },
             };
-            if (asyncCallback) asyncCallback(resp);
-            return resp;
           }
 
           console.warn('[Proxy Auth] No credentials found');
-          const resp = {};
-          if (asyncCallback) asyncCallback(resp);
-          return resp;
+          return {};
         };
 
-        // If credentials are in memory and already initialized, handle immediately
-        if (appState.isInitialized && (Object.keys(persistentCredentialsMap).length > 0 || Object.keys(temporaryCredentialsMap).length > 0)) {
-          return handleAuth();
-        }
-
-        // If in-memory is cold or initializing, wait for appState before responding
         if (asyncCallback) {
-          appState.ensureInitialized()
-            .then(() => handleAuth())
+          const ready = appState.isInitialized &&
+            (Object.keys(persistentCredentialsMap).length > 0 || Object.keys(temporaryCredentialsMap).length > 0)
+            ? Promise.resolve()
+            : appState.ensureInitialized();
+          ready
+            .then(() => handleAuth(true))
+            .then((response) => asyncCallback(response))
             .catch((err) => {
               console.warn('[Proxy Auth] Error during auth ensureInitialized:', err);
-              asyncCallback({});
+              // If retry state cannot be read/written reliably, do not risk an
+              // unbounded authentication loop.
+              asyncCallback({ cancel: true });
             });
-          return {};
-        } else {
-          return handleAuth();
+          return;
         }
+
+        // Compatibility path for direct/unit invocations without Chrome's
+        // asyncBlocking callback. Real MV3 auth events use the durable branch.
+        const host = details.challenger.host;
+        const port = details.challenger.port;
+        const creds = findCredentials(host, port);
+        if (!creds || !creds.username) {
+          console.warn('[Proxy Auth] No credentials found');
+          return {};
+        }
+        const reqId = details.requestId;
+        const previous = requestTries.get(reqId);
+        const tries = previous && Date.now() - previous.updatedAt < AUTH_TRY_TTL_MS
+          ? previous.tries
+          : 0;
+        if (tries >= MAX_AUTH_TRIES) {
+          console.warn('[Proxy Auth] Max attempts (3) exceeded');
+          return { cancel: true };
+        }
+        requestTries.set(reqId, { tries: tries + 1, updatedAt: Date.now() });
+        console.log('[Proxy Auth] Authenticating proxy');
+        logger.info('auth', 'Аутентификация прокси', 'Отправка учётных данных');
+        return {
+          authCredentials: {
+            username: String(creds.username),
+            password: String(creds.password || ''),
+          },
+        };
       },
       { urls: ['<all_urls>'] },
       ['asyncBlocking']
@@ -284,6 +436,9 @@ export function setupAuthListener() {
 
     const cleanup = (details) => {
       requestTries.delete(details.requestId);
+      clearProxyAuthAttempts(details.requestId).catch((err) => {
+        console.warn('[Proxy Auth] Failed to clear completed request state:', err);
+      });
     };
     chrome.webRequest.onCompleted.addListener(cleanup, { urls: ['<all_urls>'] });
     chrome.webRequest.onErrorOccurred.addListener(cleanup, { urls: ['<all_urls>'] });

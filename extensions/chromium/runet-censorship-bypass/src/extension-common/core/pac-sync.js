@@ -8,7 +8,10 @@ import { utils } from './utils.js';
 import { clarify, formatErrorMessage } from './errors-lib.js';
 import { logger } from './logger.js';
 import { errorHandlers } from './error-handlers.js';
-import { withProxySettingsLock } from './proxy-settings-lock.js';
+import {
+  assertProxySettingsControllable,
+  withProxySettingsLock,
+} from './proxy-settings-lock.js';
 
 const STORAGE_KEY = 'antiCensorRu';
 const ALARM_NAME = 'periodic-pac-update';
@@ -273,6 +276,7 @@ class PacSyncManager {
         const text = await httpLib.get(url, {
           timeoutMs: provider.timeoutMs || 15000,
           maxBytes: provider.maxBytes || MAX_CUSTOM_PAC_BYTES,
+          validateFinalUrl: (finalUrl) => utils.validatePacResponseUrl(url, finalUrl),
         });
         if (text && text.trim().length > 0) {
           if (text.includes('FindProxyForURL')) {
@@ -306,7 +310,9 @@ class PacSyncManager {
 
     const isProxyOrDie = pacMods && pacMods.ifProxyOrDie !== false;
 
-    await withProxySettingsLock(() => {
+    await withProxySettingsLock(async () => {
+      ensureCurrentSync();
+      await assertProxySettingsControllable();
       ensureCurrentSync();
       return new Promise((resolve, reject) => {
         const config = {
@@ -520,14 +526,17 @@ class PacSyncManager {
   }
 
   async clearPac({ persist = true } = {}) {
-    await withProxySettingsLock(() => new Promise((resolve, reject) => {
-      chrome.proxy.settings.clear({ scope: 'regular' }, () => {
-        if (chrome.runtime.lastError) {
-          return reject(new Error(chrome.runtime.lastError.message));
-        }
-        resolve();
+    await withProxySettingsLock(async () => {
+      await assertProxySettingsControllable();
+      return new Promise((resolve, reject) => {
+        chrome.proxy.settings.clear({ scope: 'regular' }, () => {
+          if (chrome.runtime.lastError) {
+            return reject(new Error(chrome.runtime.lastError.message));
+          }
+          resolve();
+        });
       });
-    }));
+    });
 
     // Transaction Commit on success
     this.revision++;
@@ -543,20 +552,23 @@ class PacSyncManager {
   async reapplyCurrentPac() {
     this.revision++;
     if (this.currentPacProviderKey === 'none' || !this.currentPacProviderKey) {
-      return withProxySettingsLock(() => new Promise((resolve, reject) => {
-        chrome.proxy.settings.clear({ scope: 'regular' }, async () => {
-          if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
-            return;
-          }
-          try {
-            await this.updateControlState();
-            resolve();
-          } catch (err) {
-            reject(err);
-          }
+      return withProxySettingsLock(async () => {
+        await assertProxySettingsControllable();
+        return new Promise((resolve, reject) => {
+          chrome.proxy.settings.clear({ scope: 'regular' }, async () => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+              return;
+            }
+            try {
+              await this.updateControlState();
+              resolve();
+            } catch (err) {
+              reject(err);
+            }
+          });
         });
-      }));
+      });
     }
     if (this.rawPacData) {
       await this.applyPacData(this.rawPacData);

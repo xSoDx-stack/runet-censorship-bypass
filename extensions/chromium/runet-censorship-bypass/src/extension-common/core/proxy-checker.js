@@ -5,7 +5,10 @@ import { registerTemporaryCredentials, unregisterTemporaryCredentials } from './
 import { logger } from './logger.js';
 import { pacSync } from './pac-sync.js';
 import { pacKitchen } from './pac-kitchen.js';
-import { withProxySettingsLock } from './proxy-settings-lock.js';
+import {
+  assertProxySettingsControllable,
+  withProxySettingsLock,
+} from './proxy-settings-lock.js';
 
 // Mutex queue to serialize health check probes and prevent race conditions on chrome.proxy.settings
 let checkQueue = Promise.resolve();
@@ -153,18 +156,14 @@ async function executeSingleProxyHealthCheck(proxyString) {
   const startTime = Date.now();
   let result = null;
   let restorationError = null;
-  const previousConfig = await new Promise((resolve, reject) => {
-    chrome.proxy.settings.get({}, (details) => {
-      if (chrome.runtime.lastError) {
-        reject(new Error(chrome.runtime.lastError.message));
-        return;
-      }
-      resolve(details && details.value ? details.value : null);
-    });
-  });
+  const previousDetails = await assertProxySettingsControllable();
+  const previousConfig = previousDetails && previousDetails.value
+    ? previousDetails.value
+    : null;
 
   try {
     // Apply layered test proxy configuration
+    await assertProxySettingsControllable();
     await new Promise((resolve, reject) => {
       chrome.proxy.settings.set({ value: testConfig, scope: 'regular' }, () => {
         if (chrome.runtime.lastError) {
@@ -229,6 +228,7 @@ async function executeSingleProxyHealthCheck(proxyString) {
     // 6. Restore exactly what was active before the probe. Permanent proxy
     // changes wait on the same lock and will run immediately afterwards.
     try {
+      await assertProxySettingsControllable();
       await new Promise((resolve, reject) => {
         const callback = () => {
           if (chrome.runtime.lastError) {
