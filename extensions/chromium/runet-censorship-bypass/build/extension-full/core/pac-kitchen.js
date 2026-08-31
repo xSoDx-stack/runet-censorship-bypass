@@ -405,13 +405,12 @@ export function cookPac(pacData, pacMods) {
 
     generatedPac += `
     /* EXCEPTIONS - Instant O(1) Hash Map Hierarchy
-     * При конфликте между exact- и wildcard-правилами на разных уровнях домена
-     * побеждает более специфичное (более глубокое) правило — независимо от того,
-     * exact оно или wildcard. Например:
-     * - при exact-правиле 'example.com' и wildcard-правиле '*.sub.example.com',
-     *   для хоста 'x.sub.example.com' побеждает '*.sub.example.com' (более специфичное).
-     * - при wildcard-правиле '*.example.com' и exact-правиле 'sub.example.com',
-     *   для хоста 'x.sub.example.com' побеждает 'sub.example.com' (более специфичное).
+     * When exact and wildcard rules match at different domain levels, the more
+     * specific (deeper) rule wins regardless of its kind. For example:
+     * - exact 'example.com' vs wildcard '*.sub.example.com': the wildcard wins
+     *   for 'x.sub.example.com'.
+     * - wildcard '*.example.com' vs exact 'sub.example.com': the exact rule wins
+     *   for 'x.sub.example.com'.
      */
     const excExact = ${JSON.stringify(exactMap)};
     const excWild = ${JSON.stringify(wildMap)};

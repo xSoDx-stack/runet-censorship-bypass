@@ -2,7 +2,7 @@
 
 import { expect } from 'chai';
 import vm from 'vm';
-import { cookPac } from '../src/extension-common/core/pac-kitchen.js';
+import { cookPac, createPacModifiers } from '../src/extension-common/core/pac-kitchen.js';
 import { generateHealthCheckPac } from '../src/extension-common/core/proxy-checker.js';
 
 describe('PAC Generation: Injection Resistance & Safe Interpolation (Item 5)', () => {
@@ -104,5 +104,24 @@ describe('PAC Generation: Injection Resistance & Safe Interpolation (Item 5)', (
     expect(sandbox.malicious).to.be.false;
     const torRes = sandbox.FindProxyForURL('http://hidden.onion', 'hidden.onion');
     expect(torRes).to.equal('SOCKS5 localhost:9150"; malicious = true; "');
+  });
+
+  it('5. Generated PAC stays ASCII when an IDN custom proxy and exception are enabled', () => {
+    const [modsError, mods] = createPacModifiers({
+      customProxyStringRaw: 'HTTPS прокси.рф:443',
+      exceptions: { 'example.com': true },
+    });
+
+    expect(modsError).to.equal(null);
+    expect(mods.filteredCustomsString).to.equal('HTTPS xn--h1adldfi.xn--p1ai:443');
+
+    const cooked = cookPac(basePac, mods);
+    const isAscii = [...cooked].every((char) => char.charCodeAt(0) <= 0x7F);
+    expect(isAscii).to.equal(true);
+
+    const sandbox = { FindProxyForURL: null };
+    new vm.Script(cooked).runInContext(vm.createContext(sandbox));
+    expect(sandbox.FindProxyForURL('https://example.com', 'example.com'))
+      .to.equal('HTTPS xn--h1adldfi.xn--p1ai:443');
   });
 });

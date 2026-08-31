@@ -1,6 +1,6 @@
 {
   "name": "anticheburnet",
-  "version": "2.2.24",
+  "version": "2.2.25",
   "description": "АнтиЧебурнет - расширение для обхода интернет-цензуры (Manifest V3)",
   "scripts": {
     "version:check": "node ../../../scripts/sync-version.mjs --check",
