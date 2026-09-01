@@ -651,12 +651,41 @@ body {
   color: var(--text-primary);
 }
 
-.spinning {
-  animation: spin 1s linear infinite;
+.sync-icon {
+  display: block;
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transform-origin: center;
+  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-@keyframes spin {
-  100% { transform: rotate(360deg); }
+#syncBtn:hover:not(:disabled) .sync-icon {
+  transform: rotate(28deg);
+}
+
+.sync-icon.spinning {
+  animation: sync-icon-spin 0.85s linear infinite;
+  will-change: transform;
+}
+
+@keyframes sync-icon-spin {
+  to { transform: rotate(1turn); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sync-icon {
+    transition: none;
+  }
+
+  .sync-icon.spinning {
+    animation-duration: 1.8s;
+  }
 }
 
 /* Switch Items (Toggles) */

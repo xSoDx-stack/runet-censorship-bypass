@@ -81,6 +81,25 @@ function FindProxyForURL(url, host) {
     expect(result).to.equal('HTTPS custom-node.example:443; DIRECT');
   });
 
+  it('Manual Proxy rule without own or PAC proxies falls back to DIRECT instead of a dead proxy', () => {
+    const mods = {
+      ifMindExceptions: true,
+      exceptions: {
+        'custom-proxy.example': true,
+      },
+      filteredCustomsString: '',
+      ifProxyOrDie: true,
+      ifUsePacScriptProxies: true,
+    };
+
+    const cooked = cookPac(basePac, mods);
+    const findProxy = evaluateCookedPac(cooked);
+
+    const result = findProxy('https://custom-proxy.example/page', 'custom-proxy.example');
+    expect(result).to.equal('DIRECT');
+    expect(result).to.not.equal('PROXY 127.0.0.1:0');
+  });
+
   it('Manual DIRECT exception should ALWAYS return DIRECT regardless of ProxyOrDie status', () => {
     // 1. With ProxyOrDie ON
     const modsOn = {

@@ -5,6 +5,10 @@ import { pacKitchen, matchExceptionDomain } from './pac-kitchen.js';
 import { logger } from './logger.js';
 import { appState } from './app-state.js';
 
+const MAX_PROXIED_HOSTS_PER_TAB = 300;
+const MAX_PROXIES_PER_TAB = 50;
+const MAX_TRACKED_TABS = 150;
+
 class BlockInformer {
   constructor() {
     this.tabData = new Map();
@@ -164,7 +168,6 @@ class BlockInformer {
     }
 
     // B. Check domain matching against PAC Kitchen user exceptions
-    // P0.3: Fixed — was using non-existent pacKitchen.cachedMods and pacKitchen.matchExceptionDomain
     if (!proxyHost) {
       try {
         const mods = pacKitchen.getCachedMods();
@@ -189,6 +192,13 @@ class BlockInformer {
   recordProxiedHost(tabId, hostname, proxyHost, isMainFrame) {
     if (tabId < 0) return;
 
+    if (this.tabData.size >= MAX_TRACKED_TABS && !this.tabData.has(tabId)) {
+      const oldestKey = this.tabData.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.tabData.delete(oldestKey);
+      }
+    }
+
     let data = this.tabData.get(tabId);
     if (!data) {
       data = {
@@ -203,7 +213,20 @@ class BlockInformer {
       data.hasMainFrame = true;
     }
 
+    if (data.proxiedHosts.size >= MAX_PROXIED_HOSTS_PER_TAB && !data.proxiedHosts.has(hostname)) {
+      const oldestHost = data.proxiedHosts.values().next().value;
+      if (oldestHost !== undefined) {
+        data.proxiedHosts.delete(oldestHost);
+      }
+    }
     data.proxiedHosts.add(hostname);
+
+    if (data.proxies.size >= MAX_PROXIES_PER_TAB && !data.proxies.has(proxyHost)) {
+      const oldestProxy = data.proxies.values().next().value;
+      if (oldestProxy !== undefined) {
+        data.proxies.delete(oldestProxy);
+      }
+    }
     data.proxies.add(proxyHost);
 
     const count = data.proxiedHosts.size;

@@ -86,7 +86,7 @@ class IpToHostManager {
 
   updateFromPac(pacData) {
     if (!pacData || typeof pacData !== 'string') return;
-    const matches = pacData.matchAll(/(?:HTTPS|PROXY|SOCKS5?)\s+([a-zA-Z0-9.\-_:]+)/gi);
+    const matches = pacData.matchAll(/(?:HTTPS|PROXY|SOCKS5?)\s+([a-zA-Z0-9.\-_:\[\]]+)/gi);
     for (const match of matches) {
       if (match[1] && match[1] !== 'DIRECT') {
         this.addHost(match[1]);

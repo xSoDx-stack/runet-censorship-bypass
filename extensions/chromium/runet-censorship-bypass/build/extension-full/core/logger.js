@@ -143,7 +143,7 @@ class LoggerManager {
     ) {
       recent.count = (recent.count || 1) + 1;
       recent.timestamp = timestamp;
-      this.scheduleSave();
+      this.scheduleSave(level === 'error');
       return recent;
     }
 
@@ -153,7 +153,7 @@ class LoggerManager {
       this.logs.pop();
     }
 
-    this.scheduleSave();
+    this.scheduleSave(level === 'error');
     return logEntry;
   }
 
@@ -170,10 +170,18 @@ class LoggerManager {
   }
 
   /**
-   * Debounced persistence to storage
+   * Persistence to storage (immediate for errors, debounced for non-critical logs)
    */
-  scheduleSave() {
+  scheduleSave(immediate = false) {
     clearTimeout(this.saveTimeout);
+    if (immediate) {
+      this.saveTimeout = null;
+      storage.set(STORAGE_LOGS_KEY, this.logs).catch((err) => {
+        console.warn('[Logger] Failed to save logs to storage:', err);
+      });
+      return;
+    }
+
     this.saveTimeout = setTimeout(() => {
       storage.set(STORAGE_LOGS_KEY, this.logs).catch((err) => {
         console.warn('[Logger] Failed to save logs to storage:', err);
@@ -264,7 +272,7 @@ class LoggerManager {
     }
 
     let report = `=======================================================\n`;
-    report += ` Отчет об ошибках и сбоях расширения «Обход блокировок Рунета»\n`;
+    report += ` Отчет об ошибках и сбоях расширения «АнтиЧебурнет»\n`;
     report += ` Дата выгрузки: ${new Date().toLocaleString('ru-RU')}\n`;
     report += ` Всего записей в отчете: ${logs.length}\n`;
     report += `=======================================================\n\n`;

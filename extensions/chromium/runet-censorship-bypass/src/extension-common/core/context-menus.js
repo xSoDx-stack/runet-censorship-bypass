@@ -26,7 +26,7 @@ const MENU_ITEMS = [
   {
     id: 'docs-support',
     title: 'Справка и поддержка проекта',
-    getUrl: () => 'https://github.com/anticensority/runet-censorship-bypass/wiki',
+    getUrl: () => 'https://github.com/xSoDx-stack/runet-censorship-bypass',
   },
 ];
 

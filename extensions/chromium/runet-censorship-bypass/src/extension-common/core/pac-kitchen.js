@@ -369,7 +369,12 @@ export function cookPac(pacData, pacMods) {
         `}
       }
       ` : ''}
-      return formatProxyChain(list, true);
+      // When PAC proxies are enabled but the source PAC has no route for a
+      // manually added host, there is no proxy to fail closed through. Falling
+      // back to DIRECT avoids routing every request to the intentional dead
+      // proxy and flooding chrome.proxy.onProxyError. Explicitly disabling PAC
+      // proxies keeps the existing fail-closed behaviour.
+      return formatProxyChain(list, ${!pacMods.ifUsePacScriptProxies});
     }
 `;
 
