@@ -172,4 +172,30 @@ describe('HTTP library large PAC streaming', () => {
     expect(error).to.exist;
     expect(error.message).to.include('redirect blocked');
   });
+
+  it('falls back to a one-byte GET probe when a server rejects HEAD', async () => {
+    const requests = [];
+    let bodyCancelled = false;
+    globalThis.fetch = async (_url, options) => {
+      requests.push(options);
+      if (options.method === 'HEAD') {
+        return { status: 405, url: 'https://example.com/proxy.pac' };
+      }
+      return {
+        status: 206,
+        url: 'https://example.com/proxy.pac',
+        body: {
+          cancel: async () => {
+            bodyCancelled = true;
+          },
+        },
+      };
+    };
+
+    const response = await httpLib.probe('https://example.com/proxy.pac');
+    expect(response.status).to.equal(206);
+    expect(requests.map((request) => request.method)).to.deep.equal(['HEAD', 'GET']);
+    expect(requests[1].headers.get('Range')).to.equal('bytes=0-0');
+    expect(bodyCancelled).to.equal(true);
+  });
 });

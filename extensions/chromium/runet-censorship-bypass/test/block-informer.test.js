@@ -31,6 +31,11 @@ describe('BlockInformer & IpToHost', () => {
 
     ipToHost.updateFromPac('function FindProxyForURL() { return "HTTPS custom-proxy.net:443; SOCKS5 10.20.30.40:1080; DIRECT"; }');
     expect(ipToHost.get('10.20.30.40')).to.equal('10.20.30.40:1080');
+
+    ipToHost.addHost('2001:db8::1');
+    expect(ipToHost.get('2001:db8::1')).to.equal('2001:db8::1');
+    ipToHost.addHost('not:a:valid:ipv6');
+    expect(ipToHost.get('not:a:valid:ipv6')).to.equal(null);
   });
 
   it('should correctly track proxied hosts per tab in BlockInformer', () => {
@@ -73,4 +78,3 @@ describe('BlockInformer & IpToHost', () => {
     blockInformer.clearTab(tabId);
   });
 });
-

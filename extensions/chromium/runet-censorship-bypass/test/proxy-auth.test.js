@@ -128,6 +128,16 @@ describe('Proxy Authentication: Separate Temporary & Persistent Credentials', ()
     expect(credsUnknown).to.be.null;
   });
 
+  it('does not register credentials for unsupported authenticated SOCKS proxies', async () => {
+    await updateProxyCredentialsFromRaw(
+      'SOCKS5 socksUser:socksPass@socks.example.com:1080\n' +
+      'HTTPS httpsUser:httpsPass@https.example.com:443',
+    );
+
+    expect(findCredentials('socks.example.com', 1080)).to.equal(null);
+    expect(findCredentials('https.example.com', 443)?.username).to.equal('httpsUser');
+  });
+
   it('should prioritize temporary credentials over persistent credentials for the same endpoint during probe', async () => {
     // Persistent credentials for myproxy.com:443
     await updateProxyCredentialsFromRaw('HTTPS oldUser:oldPass@myproxy.com:443');

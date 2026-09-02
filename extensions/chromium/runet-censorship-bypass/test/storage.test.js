@@ -109,4 +109,15 @@ describe('Storage Manager: Strict Error Handling (Task 5)', () => {
     }
     expect(clearRejected).to.be.true;
   });
+
+  it('restricts local storage to trusted extension contexts when supported', async () => {
+    let requestedAccessLevel = null;
+    chrome.storage.local.setAccessLevel = (options, cb) => {
+      requestedAccessLevel = options.accessLevel;
+      cb();
+    };
+
+    await storage.restrictLocalAccess();
+    expect(requestedAccessLevel).to.equal('TRUSTED_CONTEXTS');
+  });
 });

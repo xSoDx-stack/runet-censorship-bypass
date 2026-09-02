@@ -7,7 +7,8 @@ import { ipToHost } from './ip-to-host.js';
 import { utils } from './utils.js';
 import { clarify, formatErrorMessage } from './errors-lib.js';
 import { logger } from './logger.js';
-import { errorHandlers } from './error-handlers.js';
+import { errorHandlers, isHardProxyControlConflict } from './error-handlers.js';
+import { validatePacScriptSource } from './pac-validator.js';
 import {
   assertProxySettingsControllable,
   withProxySettingsLock,
@@ -17,6 +18,7 @@ const STORAGE_KEY = 'antiCensorRu';
 const ALARM_NAME = 'periodic-pac-update';
 const MAX_CUSTOM_PAC_BYTES = 10 * 1024 * 1024;
 const MAX_TRUSTED_PAC_BYTES = 25 * 1024 * 1024;
+const CONTROL_LOSS_CONFIRM_MS = 750;
 
 class SyncSupersededError extends Error {
   constructor() {
@@ -40,6 +42,11 @@ export const PAC_PROVIDERS = {
     order: 0,
     maxBytes: MAX_TRUSTED_PAC_BYTES,
     timeoutMs: 45000,
+    allowedFinalHosts: [
+      'e.cen.rodeo',
+      'antizapret.prostovpn.org',
+      '.ipfs.dweb.link',
+    ],
     pacUrls: [
       'https://e.cen.rodeo:8443/proxy.pac',
       'https://antizapret.prostovpn.org:8443/proxy.pac',
@@ -54,6 +61,10 @@ export const PAC_PROVIDERS = {
     order: 1,
     maxBytes: MAX_TRUSTED_PAC_BYTES,
     timeoutMs: 45000,
+    allowedFinalHosts: [
+      'anticensority.github.io',
+      'raw.githubusercontent.com',
+    ],
     pacUrls: [
       'https://anticensority.github.io/generated-pac-scripts/anticensority.pac',
       'https://raw.githubusercontent.com/anticensority/generated-pac-scripts/master/anticensority.pac',
@@ -71,7 +82,7 @@ export const PAC_PROVIDERS = {
   customPacUrl: {
     distinctKey: 'customPacUrl',
     label: getI18nMsg('Custom_pac_url', 'Свой PAC (по ссылке)'),
-    desc: 'Готовый PAC-скрипт по собственной прямой ссылке (HTTPS или HTTP).',
+    desc: 'Готовый PAC-скрипт по собственной прямой ссылке (HTTPS или HTTP на этом компьютере).',
     order: 3,
     pacUrls: [],
   },
@@ -89,8 +100,13 @@ class PacSyncManager {
     this.isSyncing = false;
     this.isControlled = false;
     this.isControllable = false;
+    this.isExpectedPacApplied = false;
+    this.levelOfControl = 'unknown';
     this.isInitialized = false;
     this.revision = 0;
+    this._proxyMutationDepth = 0;
+    this._lastControlDetails = null;
+    this._reconcileGeneration = 0;
 
     // Pending sync queue mechanism (Task 1)
     this._isSyncRunning = false;
@@ -98,6 +114,45 @@ class PacSyncManager {
     this._currentRunningOptions = null;
     this._pendingSync = null;
     this._syncGeneration = 0;
+  }
+
+  _createStateSnapshot() {
+    return {
+      currentPacProviderKey: this.currentPacProviderKey,
+      customPacUrl: this.customPacUrl,
+      lastPacUpdateStamp: this.lastPacUpdateStamp,
+      providerUpdateStamps: { ...this.providerUpdateStamps },
+      rawPacData: this.rawPacData,
+      cookedPacData: this.cookedPacData,
+    };
+  }
+
+  _restoreStateSnapshot(snapshot) {
+    this.currentPacProviderKey = snapshot.currentPacProviderKey;
+    this.customPacUrl = snapshot.customPacUrl;
+    this.lastPacUpdateStamp = snapshot.lastPacUpdateStamp;
+    this.providerUpdateStamps = snapshot.providerUpdateStamps;
+    this.rawPacData = snapshot.rawPacData;
+    this.cookedPacData = snapshot.cookedPacData;
+  }
+
+  async _rollbackPacState(snapshot) {
+    let rollbackError = null;
+    try {
+      if (snapshot.currentPacProviderKey &&
+          snapshot.currentPacProviderKey !== 'none' &&
+          snapshot.rawPacData) {
+        await this.applyPacData(snapshot.rawPacData);
+      } else {
+        await this.clearPac({ persist: false });
+      }
+    } catch (err) {
+      rollbackError = err;
+    } finally {
+      this._restoreStateSnapshot(snapshot);
+      await this.updateControlState();
+    }
+    if (rollbackError) throw rollbackError;
   }
 
   resetRuntimeState() {
@@ -114,6 +169,13 @@ class PacSyncManager {
     this.rawPacData = '';
     this.cookedPacData = '';
     this.lastError = null;
+    this.isControlled = false;
+    this.isControllable = false;
+    this.isExpectedPacApplied = false;
+    this.levelOfControl = 'unknown';
+    this._lastControlDetails = null;
+    this._reconcileGeneration++;
+    this.isInitialized = false;
     this.revision++;
     if (!this._isSyncRunning) {
       this.isSyncing = false;
@@ -146,14 +208,35 @@ class PacSyncManager {
       }
     }
 
-    this.isInitialized = true;
+    const storedPacValidation = this.rawPacData
+      ? validatePacScriptSource(this.rawPacData)
+      : { valid: true };
+    if (!storedPacValidation.valid) {
+      console.warn('[PacSync] Ignoring invalid PAC data restored from storage:', storedPacValidation.error);
+      this.rawPacData = '';
+      this.cookedPacData = '';
+    } else if (this.rawPacData) {
+      const pacMods = await pacKitchen.getPacMods();
+      this.cookedPacData = pacKitchen.cook(this.rawPacData, pacMods);
+    }
+
     await this.updateControlState();
     this.setupAlarms();
     this.updateTitle();
 
-    if (this.currentPacProviderKey && this.currentPacProviderKey !== 'none' && !this.rawPacData) {
-      await this.syncWithPacProvider({ ifUnattended: true });
+    const shouldHavePac = this.currentPacProviderKey &&
+      this.currentPacProviderKey !== 'none';
+    if (shouldHavePac) {
+      if (!this.rawPacData) {
+        await this.syncWithPacProvider({ ifUnattended: true });
+      } else if (this.isControllable && !this.isExpectedPacApplied) {
+        // Storage may say PAC is enabled while the profile proxy setting was
+        // cleared after a browser crash or an interrupted extension update.
+        await this.applyPacData(this.rawPacData);
+      }
     }
+
+    this.isInitialized = true;
   }
 
   setupAlarms() {
@@ -172,47 +255,122 @@ class PacSyncManager {
     });
   }
 
-  async updateControlState() {
-    return new Promise((resolve) => {
-      chrome.proxy.settings.get({}, (details) => {
+  async updateControlState({
+    reportControlState = true,
+    updateIcon = reportControlState,
+  } = {}) {
+    const details = await new Promise((resolve) => {
+      chrome.proxy.settings.get({}, (currentDetails) => {
         if (chrome.runtime.lastError) {
           console.warn('proxy.settings.get error:', chrome.runtime.lastError);
-          resolve(false);
+          resolve(null);
           return;
         }
-
-        this.isControllable = utils.areSettingsControllableFor(details);
-        this.isControlled = utils.areSettingsControlledFor(details);
-        errorHandlers.handleControlState(
-          this.isControlled,
-          Boolean(
-            this.currentPacProviderKey &&
-            this.currentPacProviderKey !== 'none' &&
-            this.rawPacData
-          )
-        );
-
-        const iconPath = this.isControlled
-          ? {
-              16: 'icons/default-16.png',
-              32: 'icons/default-32.png',
-              48: 'icons/default-48.png',
-              128: 'icons/default-128.png',
-            }
-          : {
-              16: 'icons/default-grayscale-16.png',
-              32: 'icons/default-grayscale-32.png',
-              48: 'icons/default-grayscale-48.png',
-              128: 'icons/default-grayscale-128.png',
-            };
-
-        chrome.action.setIcon({ path: iconPath }, () => {
-          if (chrome.runtime.lastError) { /* ignore */ }
-        });
-
-        resolve(this.isControlled);
+        resolve(currentDetails || {});
       });
     });
+    if (!details) {
+      this._lastControlDetails = null;
+      return false;
+    }
+
+    this._lastControlDetails = details;
+    this.levelOfControl = details.levelOfControl || 'unknown';
+    this.isControllable = utils.areSettingsControllableFor(details);
+    this.isControlled = utils.areSettingsControlledFor(details);
+    const expectedControl = Boolean(
+      this.currentPacProviderKey &&
+      this.currentPacProviderKey !== 'none' &&
+      this.rawPacData
+    );
+    const expectedPac = Boolean(expectedControl && this.cookedPacData);
+    this.isExpectedPacApplied = Boolean(
+      expectedPac &&
+      this.isControlled &&
+      details.value?.mode === 'pac_script' &&
+      details.value.pacScript?.data === this.cookedPacData
+    );
+    const controlState = {
+      isControlled: this.isControlled,
+      isControllable: this.isControllable,
+      expectedControl,
+      levelOfControl: this.levelOfControl,
+    };
+    if (reportControlState) {
+      await errorHandlers.handleControlState(controlState);
+    }
+
+    if (updateIcon) this._updateControlIcon();
+
+    return this.isControlled;
+  }
+
+  _updateControlIcon() {
+    const iconPath = this.isControlled
+      ? {
+          16: 'icons/default-16.png',
+          32: 'icons/default-32.png',
+          48: 'icons/default-48.png',
+          128: 'icons/default-128.png',
+        }
+      : {
+          16: 'icons/default-grayscale-16.png',
+          32: 'icons/default-grayscale-32.png',
+          48: 'icons/default-grayscale-48.png',
+          128: 'icons/default-grayscale-128.png',
+        };
+
+    chrome.action.setIcon({ path: iconPath }, () => {
+      if (chrome.runtime.lastError) { /* ignore */ }
+    });
+  }
+
+  _getCurrentControlState() {
+    return {
+      isControlled: this.isControlled,
+      isControllable: this.isControllable,
+      expectedControl: Boolean(
+        this.currentPacProviderKey &&
+        this.currentPacProviderKey !== 'none' &&
+        this.rawPacData
+      ),
+      levelOfControl: this.levelOfControl,
+    };
+  }
+
+  _waitForControlStateStability() {
+    return new Promise((resolve) => setTimeout(resolve, CONTROL_LOSS_CONFIRM_MS));
+  }
+
+  async reconcileProxyState() {
+    const reconcileGeneration = ++this._reconcileGeneration;
+    if (this._proxyMutationDepth > 0) return false;
+
+    await this.updateControlState({ reportControlState: false });
+    if (!this._lastControlDetails || reconcileGeneration !== this._reconcileGeneration) {
+      return false;
+    }
+
+    let controlState = this._getCurrentControlState();
+    if (isHardProxyControlConflict(controlState)) {
+      await this._waitForControlStateStability();
+      if (reconcileGeneration !== this._reconcileGeneration) return false;
+
+      await this.updateControlState({ reportControlState: false });
+      if (!this._lastControlDetails || reconcileGeneration !== this._reconcileGeneration) {
+        return false;
+      }
+      controlState = this._getCurrentControlState();
+    }
+
+    await errorHandlers.handleControlState(controlState);
+    this._updateControlIcon();
+    const shouldHavePac = controlState.expectedControl;
+    if (shouldHavePac && this.isControllable && !this.isExpectedPacApplied) {
+      await this.reapplyCurrentPac();
+      return true;
+    }
+    return false;
   }
 
   updateTitle() {
@@ -270,19 +428,37 @@ class PacSyncManager {
     for (const url of urls) {
       if (url.startsWith('data:')) {
         const decoded = decodeURIComponent(url.replace('data:application/x-ns-proxy-autoconfig,', ''));
+        const validation = validatePacScriptSource(decoded);
+        if (!validation.valid) throw new Error(validation.error);
         return decoded;
       }
       try {
         const text = await httpLib.get(url, {
           timeoutMs: provider.timeoutMs || 15000,
           maxBytes: provider.maxBytes || MAX_CUSTOM_PAC_BYTES,
-          validateFinalUrl: (finalUrl) => utils.validatePacResponseUrl(url, finalUrl),
+          validateFinalUrl: (finalUrl) => {
+            const validation = utils.validatePacResponseUrl(url, finalUrl);
+            if (!validation.valid || !provider.allowedFinalHosts) return validation;
+
+            const finalHost = new URL(validation.sanitizedUrl).hostname.toLowerCase();
+            const isAllowedHost = provider.allowedFinalHosts.some((allowedHost) =>
+              allowedHost.startsWith('.')
+                ? finalHost.endsWith(allowedHost)
+                : finalHost === allowedHost
+            );
+            if (!isAllowedHost) {
+              return {
+                valid: false,
+                error: `PAC-провайдер перенаправил запрос на недоверенный хост: ${finalHost}`,
+              };
+            }
+            return validation;
+          },
         });
         if (text && text.trim().length > 0) {
-          if (text.includes('FindProxyForURL')) {
-            return text;
-          }
-          throw new Error('Ответ не содержит функцию FindProxyForURL');
+          const validation = validatePacScriptSource(text);
+          if (!validation.valid) throw new Error(validation.error);
+          return text;
         }
         throw new Error('Сервер вернул пустой PAC-скрипт');
       } catch (err) {
@@ -297,12 +473,26 @@ class PacSyncManager {
     );
   }
 
-  async applyPacData(candidateRawData, { expectedSyncGeneration = null } = {}) {
+  async applyPacData(candidateRawData, options = {}) {
+    this._proxyMutationDepth++;
+    try {
+      return await this._applyPacData(candidateRawData, options);
+    } finally {
+      this._proxyMutationDepth--;
+    }
+  }
+
+  async _applyPacData(candidateRawData, { expectedSyncGeneration = null } = {}) {
     const ensureCurrentSync = () => {
       if (expectedSyncGeneration !== null && expectedSyncGeneration !== this._syncGeneration) {
         throw new SyncSupersededError();
       }
     };
+
+    const validation = validatePacScriptSource(candidateRawData);
+    if (!validation.valid) {
+      throw new Error(validation.error);
+    }
 
     const pacMods = await pacKitchen.getPacMods();
     ensureCurrentSync();
@@ -312,9 +502,9 @@ class PacSyncManager {
 
     await withProxySettingsLock(async () => {
       ensureCurrentSync();
-      await assertProxySettingsControllable();
+      const previousDetails = await assertProxySettingsControllable();
       ensureCurrentSync();
-      return new Promise((resolve, reject) => {
+      await new Promise((resolve, reject) => {
         const config = {
           mode: 'pac_script',
           pacScript: {
@@ -333,6 +523,32 @@ class PacSyncManager {
           }
         );
       });
+
+      try {
+        ensureCurrentSync();
+      } catch (err) {
+        // A reset or a newer sync may supersede this request while Chrome is
+        // applying the PAC. Restore the exact setting observed under the same
+        // lock before allowing the stale operation to escape.
+        await new Promise((resolve, reject) => {
+          const callback = () => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+              return;
+            }
+            resolve();
+          };
+          if (previousDetails && previousDetails.value) {
+            chrome.proxy.settings.set({
+              value: previousDetails.value,
+              scope: 'regular',
+            }, callback);
+          } else {
+            chrome.proxy.settings.clear({ scope: 'regular' }, callback);
+          }
+        });
+        throw err;
+      }
     });
 
     // Transaction Commit on success
@@ -474,6 +690,8 @@ class PacSyncManager {
     }
 
     this.lastError = null;
+    const previousState = this._createStateSnapshot();
+    let appliedRevision = null;
 
     try {
       console.log(`[PAC Sync] Downloading PAC for provider "${key}"...`);
@@ -484,6 +702,7 @@ class PacSyncManager {
 
       console.log('[PAC Sync] Cooking and applying PAC script...');
       await this.applyPacData(candidateRaw, { expectedSyncGeneration: generation });
+      appliedRevision = this.revision;
       if (generation !== this._syncGeneration) {
         throw new SyncSupersededError();
       }
@@ -507,6 +726,13 @@ class PacSyncManager {
       if (err instanceof SyncSupersededError) {
         throw err;
       }
+      if (appliedRevision !== null && this.revision === appliedRevision) {
+        try {
+          await this._rollbackPacState(previousState);
+        } catch (rollbackErr) {
+          console.error('[PAC Sync] Failed to roll back an uncommitted PAC update:', rollbackErr);
+        }
+      }
       this.lastError = err;
       const errorMsg = formatErrorMessage(err) || err.message || String(err);
       console.warn(`[PAC Sync Warning for "${key}"]:`, errorMsg);
@@ -525,9 +751,38 @@ class PacSyncManager {
     await this.syncWithPacProvider({ key, customUrl, ifUnattended: false });
   }
 
-  async clearPac({ persist = true } = {}) {
+  async setRawPacData(candidateRawData) {
+    const previousState = this._createStateSnapshot();
+    await this.applyPacData(candidateRawData);
+    const appliedRevision = this.revision;
+    try {
+      await this.persistState();
+    } catch (err) {
+      if (this.revision === appliedRevision) {
+        try {
+          await this._rollbackPacState(previousState);
+        } catch (rollbackErr) {
+          console.error('[PAC Sync] Failed to roll back uncommitted raw PAC data:', rollbackErr);
+        }
+      }
+      throw err;
+    }
+  }
+
+  async clearPac(options = {}) {
+    this._proxyMutationDepth++;
+    try {
+      return await this._clearPac(options);
+    } finally {
+      this._proxyMutationDepth--;
+    }
+  }
+
+  async _clearPac({ persist = true } = {}) {
+    const previousState = this._createStateSnapshot();
+    let previousDetails = null;
     await withProxySettingsLock(async () => {
-      await assertProxySettingsControllable();
+      previousDetails = await assertProxySettingsControllable();
       return new Promise((resolve, reject) => {
         chrome.proxy.settings.clear({ scope: 'regular' }, () => {
           if (chrome.runtime.lastError) {
@@ -544,7 +799,37 @@ class PacSyncManager {
     this.rawPacData = '';
     this.cookedPacData = '';
     if (persist) {
-      await this.persistState();
+      const clearedRevision = this.revision;
+      try {
+        await this.persistState();
+      } catch (err) {
+        if (this.revision === clearedRevision) {
+          try {
+            await withProxySettingsLock(async () => {
+              await assertProxySettingsControllable();
+              if (!previousDetails?.value?.mode) return;
+              await new Promise((resolve, reject) => {
+                chrome.proxy.settings.set({
+                  value: previousDetails.value,
+                  scope: 'regular',
+                }, () => {
+                  if (chrome.runtime.lastError) {
+                    reject(new Error(chrome.runtime.lastError.message));
+                    return;
+                  }
+                  resolve();
+                });
+              });
+            });
+          } catch (rollbackErr) {
+            console.error('[PAC Sync] Failed to roll back an uncommitted clear:', rollbackErr);
+          }
+          this.revision++;
+          this._restoreStateSnapshot(previousState);
+        }
+        await this.updateControlState();
+        throw err;
+      }
     }
     await this.updateControlState();
   }
@@ -598,6 +883,7 @@ class PacSyncManager {
       isSyncing: this.isSyncing,
       isControlled: this.isControlled,
       isControllable: this.isControllable,
+      levelOfControl: this.levelOfControl,
       lastError: this.lastError ? this.lastError.message : null,
       providers: PAC_PROVIDERS,
       hasPacData: Boolean(this.rawPacData),

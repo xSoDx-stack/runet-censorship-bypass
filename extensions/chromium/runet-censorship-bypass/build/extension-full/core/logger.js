@@ -3,8 +3,9 @@
 import { storage } from './storage.js';
 
 const STORAGE_LOGS_KEY = 'antiCensorLogs';
-// P1.6: Match MAX_LOGS_LIMIT to getLogs default limit (150) so the limit param is meaningful
 const MAX_LOGS_LIMIT = 150;
+const DUPLICATE_WINDOW_MS = 10000;
+const IMMEDIATE_SAVE_INTERVAL_MS = 1000;
 
 /**
  * Sanitize strings to redact passwords, auth credentials, tokens, and cookies
@@ -25,8 +26,11 @@ export function sanitizeLogString(str) {
     .replace(/(Basic\s+)[a-zA-Z0-9+/=]{10,}/gi, '$1***')
     // Mask Bearer tokens
     .replace(/(Bearer\s+)[a-zA-Z0-9._~+/-]{10,}/gi, '$1***')
+    // Mask cookie headers and JSON/form-style secrets copied into diagnostics
+    .replace(/((?:set-cookie|cookie):\s*)[^\r\n]+/gi, '$1***')
+    .replace(/(["']?(?:password|pass|pwd|secret|token|access[_-]?token|refresh[_-]?token|api[_-]?key|client[_-]?secret)["']?\s*[:=]\s*["']?)[^"'\s,;&]+/gi, '$1***')
     // Mask URL query params with credentials
-    .replace(/([?&](?:password|pass|pwd|token|secret|auth|key|apiKey|cookie)=)[^&#\s]+/gi, '$1***');
+    .replace(/([?&](?:password|pass|pwd|token|access_token|refresh_token|secret|client_secret|auth|key|api_key|apiKey|cookie|session)=)[^&#\s]+/gi, '$1***');
 }
 
 /**
@@ -53,7 +57,7 @@ export function sanitizeLogData(data) {
 
   if (typeof data === 'object') {
     const cleanObj = {};
-    const SENSITIVE_KEYS = /^(password|pass|pwd|secret|token|auth|authorization|cookie|cookies|credentials|proxycredentials|rawauth)$/i;
+    const SENSITIVE_KEYS = /^(password|pass|pwd|secret|token|access[_-]?token|refresh[_-]?token|api[_-]?key|client[_-]?secret|session(?:id)?|auth|authorization|cookie|cookies|set-cookie|credentials|proxycredentials|rawauth)$/i;
 
     for (const [key, value] of Object.entries(data)) {
       if (SENSITIVE_KEYS.test(key)) {
@@ -75,6 +79,8 @@ class LoggerManager {
   constructor() {
     this.logs = [];
     this.saveTimeout = null;
+    this.savePromise = Promise.resolve();
+    this.lastImmediateSaveAt = 0;
     this.isInitialized = false;
   }
 
@@ -139,7 +145,7 @@ class LoggerManager {
       recent.category === category &&
       recent.title === logEntry.title &&
       recent.message === logEntry.message &&
-      timestamp - recent.timestamp < 1500
+      timestamp - recent.timestamp < DUPLICATE_WINDOW_MS
     ) {
       recent.count = (recent.count || 1) + 1;
       recent.timestamp = timestamp;
@@ -174,19 +180,31 @@ class LoggerManager {
    */
   scheduleSave(immediate = false) {
     clearTimeout(this.saveTimeout);
-    if (immediate) {
+    const now = Date.now();
+    if (immediate && now - this.lastImmediateSaveAt >= IMMEDIATE_SAVE_INTERVAL_MS) {
       this.saveTimeout = null;
-      storage.set(STORAGE_LOGS_KEY, this.logs).catch((err) => {
-        console.warn('[Logger] Failed to save logs to storage:', err);
-      });
+      this.lastImmediateSaveAt = now;
+      this.queueSave();
       return;
     }
 
     this.saveTimeout = setTimeout(() => {
-      storage.set(STORAGE_LOGS_KEY, this.logs).catch((err) => {
+      this.saveTimeout = null;
+      this.queueSave();
+    }, 400);
+  }
+
+  queueSave() {
+    // Snapshot now and serialize writes so an older, slower callback cannot
+    // overwrite a newer log state.
+    const snapshot = sanitizeLogData(this.logs);
+    this.savePromise = this.savePromise
+      .catch(() => {})
+      .then(() => storage.set(STORAGE_LOGS_KEY, snapshot))
+      .catch((err) => {
         console.warn('[Logger] Failed to save logs to storage:', err);
       });
-    }, 400);
+    return this.savePromise;
   }
 
   /**
@@ -251,6 +269,7 @@ class LoggerManager {
     this.logs = [];
     clearTimeout(this.saveTimeout);
     this.saveTimeout = null;
+    await this.savePromise.catch(() => {});
     await storage.set(STORAGE_LOGS_KEY, []);
     return true;
   }
@@ -259,6 +278,8 @@ class LoggerManager {
     this.logs = [];
     clearTimeout(this.saveTimeout);
     this.saveTimeout = null;
+    this.savePromise = Promise.resolve();
+    this.lastImmediateSaveAt = 0;
     this.isInitialized = false;
   }
 

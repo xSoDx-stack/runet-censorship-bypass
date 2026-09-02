@@ -2,3 +2,12 @@ node_modules
 npm-debug.log
 .swp
 .idea/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crx
+*.zip

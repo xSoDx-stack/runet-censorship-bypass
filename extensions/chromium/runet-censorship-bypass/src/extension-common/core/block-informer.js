@@ -93,7 +93,9 @@ class BlockInformer {
       level: 'error',
       category: 'proxy',
       title: errStr,
-      message: `Сбой прокси при обращении к ${parsedDomain || 'серверу'}`,
+      // Keep the message stable across domains so Logger aggregates a request
+      // storm into one entry with a repeat counter.
+      message: 'Браузер не смог установить соединение с прокси-сервером',
       details: {
         error: details.error,
         domain: parsedDomain,

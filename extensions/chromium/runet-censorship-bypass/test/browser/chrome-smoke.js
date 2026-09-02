@@ -450,10 +450,23 @@ async function runChromeSmoke() {
     await helper.worker.evaluate(() => new Promise((resolve) => {
       chrome.proxy.settings.clear({ scope: 'regular' }, resolve);
     }));
+
+    const recoveryDeadline = Date.now() + TIMEOUT_MS;
+    let recoveredControl = null;
+    while (Date.now() < recoveryDeadline) {
+      recoveredControl = await readProxySettings(optionsPage);
+      if (recoveredControl.levelOfControl === 'controlled_by_this_extension' &&
+          recoveredControl.value?.mode === 'pac_script') {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.equal(recoveredControl?.levelOfControl, 'controlled_by_this_extension');
+    assert.equal(recoveredControl?.value?.mode, 'pac_script');
     await optionsPage.close();
 
     console.log(`Chrome MV3 smoke passed with ${await browser.version()}.`);
-    console.log('Verified PAC apply, real HTTP 407 auth, durable retry limit, and ownership protection.');
+    console.log('Verified PAC apply, HTTP 407 auth, ownership protection, and automatic control recovery.');
   } finally {
     if (browser) await browser.close().catch(() => undefined);
     wrongAuthProxy.releaseChallenge();

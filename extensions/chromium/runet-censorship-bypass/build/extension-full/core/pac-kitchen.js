@@ -3,6 +3,7 @@
 import { storage } from './storage.js';
 import { utils } from './utils.js';
 import { sanitizeRuleCollections } from './domain-rules.js';
+import { LOCAL_PROXY_SERVICES } from './local-proxy-services.js';
 import {
   buildProxyCredentialsMap,
   clearProxyAuthAttempts,
@@ -14,6 +15,7 @@ import {
 
 const KITCHEN_STARTS_MARK = '\n\n//%#@@@@@@ PAC_KITCHEN_STARTS @@@@@@#%';
 const MODS_KEY = 'pac-kitchen-mods';
+const MAX_CUSTOM_PROXIES = 100;
 
 export { setupAuthListener, initProxyAuth };
 
@@ -215,6 +217,19 @@ export function createPacModifiers(mods = {}) {
       .split(/(?:\s*(?:;\r?\n)+\s*|\r?\n+|;\s*)+/g)
       .map((p) => p.trim())
       .filter(Boolean);
+
+    if (customProxyArray.length > MAX_CUSTOM_PROXIES) {
+      return [new RangeError(`Слишком много пользовательских прокси. Максимум: ${MAX_CUSTOM_PROXIES}.`)];
+    }
+
+    const unsupportedSocksAuth = customProxyArray.find((pStr) => {
+      const parsed = utils.parseProxyScheme(pStr);
+      return parsed && parsed.hasAuth && parsed.type.startsWith('SOCKS');
+    });
+    if (unsupportedSocksAuth) {
+      return [new TypeError('Chromium не поддерживает логин и пароль для SOCKS4/SOCKS5. Используйте SOCKS без авторизации либо HTTP/HTTPS-прокси.')];
+    }
+
     if (self.ifUseSecureProxiesOnly) {
       customProxyArray = customProxyArray.filter((pStr) => {
         const parsed = utils.parseProxyScheme(pStr);
@@ -224,11 +239,11 @@ export function createPacModifiers(mods = {}) {
   }
 
   if (self.ifUseLocalWarp) {
-    self.warpPoints = ['SOCKS5 localhost:40000', 'HTTPS localhost:40000'];
+    self.warpPoints = [...LOCAL_PROXY_SERVICES.warp.proxies];
     customProxyArray.push(...self.warpPoints);
   }
   if (self.ifUseLocalTor) {
-    self.torPoints = ['SOCKS5 localhost:9150', 'SOCKS5 localhost:9050'];
+    self.torPoints = [...LOCAL_PROXY_SERVICES.tor.proxies];
     customProxyArray.push(...self.torPoints);
   }
 
@@ -276,20 +291,37 @@ export function cookPac(pacData, pacMods) {
     return pacData;
   }
 
+  const missingOriginalFallback = pacMods.ifProxyOrDie !== false
+    ? 'PROXY 127.0.0.1:0'
+    : 'DIRECT';
+
   let generatedPac = `${KITCHEN_STARTS_MARK}
 ;(function(global) {
   "use strict";
-  const originalFindProxyForURL = typeof FindProxyForURL === 'function' ? FindProxyForURL : function() { return "DIRECT"; };
+  const originalFindProxyForURL = typeof FindProxyForURL === 'function'
+    ? FindProxyForURL
+    : function() { return ${JSON.stringify(missingOriginalFallback)}; };
   let tmp = function(url, host) {
-    const dotHost = '.' + host;
 `;
 
-  if (pacMods.ifMindWhitelist && pacMods.whitelist && pacMods.whitelist.length) {
+  if (pacMods.ifMindWhitelist) {
+    const whitelistMap = {};
+    for (const whiteHost of (pacMods.whitelist || [])) {
+      const clean = String(whiteHost || '').replace(/^\*\.?/, '').replace(/^\./, '');
+      if (clean) whitelistMap[clean] = 1;
+    }
     generatedPac += `
-    const ifWhitelisted = ${JSON.stringify(pacMods.whitelist)}.some((whiteHost) => {
-      const clean = whiteHost.replace(/^\\*\\.?/, '').replace(/^\\./, '');
-      return dotHost.endsWith('.' + clean);
-    });
+    const whitelistHosts = ${JSON.stringify(whitelistMap)};
+    let ifWhitelisted = whitelistHosts[host] === 1;
+    if (!ifWhitelisted) {
+      const whiteParts = host.split('.');
+      for (let whiteIdx = 1; whiteIdx < whiteParts.length; whiteIdx++) {
+        if (whitelistHosts[whiteParts.slice(whiteIdx).join('.')] === 1) {
+          ifWhitelisted = true;
+          break;
+        }
+      }
+    }
     if (!ifWhitelisted) {
       return 'DIRECT';
     }

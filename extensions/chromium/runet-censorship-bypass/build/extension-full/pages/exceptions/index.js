@@ -374,9 +374,9 @@ async function handleFileImport(e) {
     } else if (state.activeSubTab === 'excluded') {
       validDomains.forEach((d) => (state.exceptions[d] = false));
     } else if (state.activeSubTab === 'whitelist') {
-      validDomains.forEach((d) => {
-        if (!state.whitelist.includes(d)) state.whitelist.push(d);
-      });
+      const whitelistSet = new Set(state.whitelist);
+      validDomains.forEach((d) => whitelistSet.add(d));
+      state.whitelist = [...whitelistSet];
     }
 
     await saveAllData();

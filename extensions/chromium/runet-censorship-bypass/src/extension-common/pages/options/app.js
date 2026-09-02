@@ -11,6 +11,7 @@ import { buildRknBlocklistUrl, normalizeRknLookupUrl } from '../../core/rkn-bloc
 
 // Single source of truth for fallback version placeholder
 const DEFAULT_VERSION = '';
+const PROXY_HEALTH_FRESH_MS = 15 * 60 * 1000;
 
 // State
 let appState = {
@@ -387,13 +388,23 @@ function hasAnyWorkingProxy() {
   return customList.some((p) => {
     const st = appState.proxyHealthMap[p.raw];
     if (!st || st.checking) return true;
+    if (!isProxyHealthFresh(st)) return true;
     return st.ok === true;
   });
 }
 
+function isProxyHealthFresh(health, now = Date.now()) {
+  const checkedAt = Number(health?.checkedAt);
+  return Number.isFinite(checkedAt) && checkedAt > 0 && now - checkedAt <= PROXY_HEALTH_FRESH_MS;
+}
+
 // Check Health of a Single Proxy
 async function checkProxyAvailability(proxyRaw) {
-  appState.proxyHealthMap[proxyRaw] = { checking: true };
+  appState.proxyHealthMap[proxyRaw] = Object.assign(
+    {},
+    appState.proxyHealthMap[proxyRaw],
+    { checking: true },
+  );
   renderCustomProxiesList();
   updateHomeWarning();
 
@@ -404,12 +415,14 @@ async function checkProxyAvailability(proxyRaw) {
       ok: res.data.ok,
       latency: res.data.latency,
       error: res.data.error,
+      checkedAt: res.data.checkedAt,
     };
   } else {
     appState.proxyHealthMap[proxyRaw] = {
       checking: false,
       ok: false,
       error: res.error || 'Ошибка проверки',
+      checkedAt: Date.now(),
     };
   }
 
@@ -444,7 +457,7 @@ function updateHomeWarning() {
 
   const deadProxies = customList.filter((p) => {
     const status = appState.proxyHealthMap[p.raw];
-    return status && status.ok === false && !status.checking;
+    return status && status.ok === false && !status.checking && isProxyHealthFresh(status);
   });
 
   if (deadProxies.length > 0) {
@@ -652,17 +665,28 @@ function renderCustomProxiesList() {
     }
 
     const statusSpan = document.createElement('span');
+    const checkedAt = Number(health.checkedAt);
+    const checkedAtText = Number.isFinite(checkedAt) && checkedAt > 0
+      ? new Date(checkedAt).toLocaleString('ru-RU')
+      : '';
+    const isStale = typeof health.ok === 'boolean' && !isProxyHealthFresh(health);
     if (health.checking) {
       statusSpan.className = 'proxy-status-tag checking';
       statusSpan.textContent = '🔄 Проверка';
     } else if (health.ok === true) {
-      statusSpan.className = 'proxy-status-tag online';
-      statusSpan.title = `Задержка: ${health.latency} мс`;
-      statusSpan.textContent = `🟢 ${health.latency}мс`;
+      statusSpan.className = `proxy-status-tag ${isStale ? 'stale' : 'online'}`;
+      const latency = Number.isFinite(health.latency) ? `${health.latency}мс` : 'Доступен';
+      statusSpan.title = checkedAtText
+        ? `Задержка: ${latency}. Последняя проверка: ${checkedAtText}${isStale ? '. Результат мог устареть' : ''}`
+        : `Задержка: ${latency}`;
+      statusSpan.textContent = `${isStale ? '🕘' : '🟢'} ${latency}`;
     } else if (health.ok === false) {
-      statusSpan.className = 'proxy-status-tag offline';
-      statusSpan.title = health.error || 'Недоступен';
-      statusSpan.textContent = '🔴 Недоступен';
+      statusSpan.className = `proxy-status-tag ${isStale ? 'stale' : 'offline'}`;
+      const errorText = health.error || 'Недоступен';
+      statusSpan.title = checkedAtText
+        ? `${errorText}. Последняя проверка: ${checkedAtText}${isStale ? '. Результат мог устареть' : ''}`
+        : errorText;
+      statusSpan.textContent = isStale ? '🕘 Нет связи' : '🔴 Недоступен';
     } else {
       statusSpan.className = 'proxy-status-tag checking';
       statusSpan.textContent = '❓ Не проверен';
@@ -787,6 +811,7 @@ async function handleAddStructuredProxy() {
       ok: true,
       latency: health.data.latency,
       checking: false,
+      checkedAt: health.data.checkedAt,
     };
 
     currentList.push({ raw: proxyLine });
@@ -1353,6 +1378,7 @@ async function loadState(currentDomain = '') {
     appState.lastErrors = res.data.lastErrors || appState.lastErrors;
     appState.version = formatVersion(res.data.version || (typeof chrome !== 'undefined' && chrome.runtime?.getManifest?.()?.version) || DEFAULT_VERSION);
     appState.exceptionStats = res.data.exceptionStats || appState.exceptionStats;
+    appState.proxyHealthMap = res.data.proxyHealthMap || {};
     if (res.data.currentSiteMatch) {
       appState.currentSiteMatch = res.data.currentSiteMatch;
     }
@@ -1680,21 +1706,54 @@ function setupEvents() {
   }
 
   // Quick Toggles: Tor, WARP, OwnOnly
-  const bindProxyToggle = (checkbox, key) => {
+  const bindProxyToggle = (checkbox, key, localService = null) => {
     if (!checkbox) return;
     checkbox.addEventListener('change', async () => {
-      const mods = { [key]: checkbox.checked };
-      const res = await sendMessage({ action: 'SAVE_MODS', mods });
-      if (res.success) {
-        appState.pacMods = res.data;
+      const previousValue = Boolean(appState.pacMods?.[key]);
+      const enabled = Boolean(checkbox.checked);
+      checkbox.disabled = true;
+
+      try {
+        if (localService && enabled) {
+          showToast('Проверяем локальный прокси…');
+        }
+
+        const res = localService
+          ? await sendMessage({
+            action: 'SET_LOCAL_PROXY_ENABLED',
+            service: localService,
+            enabled,
+          })
+          : await sendMessage({ action: 'SAVE_MODS', mods: { [key]: enabled } });
+
+        if (!res.success) {
+          checkbox.checked = previousValue;
+          const actionText = enabled ? 'включить' : 'выключить';
+          showToast(`Не удалось ${actionText}: ${res.error || 'локальный прокси недоступен'}`, 4500);
+          return;
+        }
+
+        appState.pacMods = localService ? res.data.pacMods : res.data;
         updateHomeWarning();
-        showToast('Настройки обновлены');
+
+        if (localService && enabled) {
+          const health = res.data.health;
+          const latency = Number.isFinite(health?.latency) ? `, ${health.latency} мс` : '';
+          showToast(`✓ Прокси доступен: ${health.workingProxy}${latency}`);
+        } else {
+          showToast('Настройки обновлены');
+        }
+      } catch (err) {
+        checkbox.checked = previousValue;
+        showToast(`Ошибка: ${err.message || 'не удалось сохранить настройку'}`, 4500);
+      } finally {
+        checkbox.disabled = false;
       }
     });
   };
 
-  bindProxyToggle(el.torToggle, 'ifUseLocalTor');
-  bindProxyToggle(el.warpToggle, 'ifUseLocalWarp');
+  bindProxyToggle(el.torToggle, 'ifUseLocalTor', 'tor');
+  bindProxyToggle(el.warpToggle, 'ifUseLocalWarp', 'warp');
   bindProxyToggle(el.ownOnlyToggle, 'ifUseOwnProxiesOnlyForOwnSites');
 
   // Modifiers: Instant Autosave on change

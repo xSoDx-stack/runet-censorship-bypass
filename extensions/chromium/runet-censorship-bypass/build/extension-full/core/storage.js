@@ -4,6 +4,38 @@
  * Storage Manager for Manifest V3 using chrome.storage.local
  */
 export const storage = {
+  /**
+   * Keep extension settings, proxy credentials and logs unavailable to content
+   * scripts. Older Chromium versions do not expose setAccessLevel, so this is
+   * intentionally a no-op there.
+   * @returns {Promise<void>}
+   */
+  async restrictLocalAccess() {
+    if (typeof chrome.storage.local.setAccessLevel !== 'function') {
+      return;
+    }
+
+    return new Promise((resolve, reject) => {
+      try {
+        const maybePromise = chrome.storage.local.setAccessLevel(
+          { accessLevel: 'TRUSTED_CONTEXTS' },
+          () => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+              return;
+            }
+            resolve();
+          },
+        );
+        if (maybePromise && typeof maybePromise.then === 'function') {
+          maybePromise.then(resolve, reject);
+        }
+      } catch (err) {
+        reject(err);
+      }
+    });
+  },
+
   async get(key, defaultValue = undefined) {
     return new Promise((resolve, reject) => {
       chrome.storage.local.get(key, (items) => {

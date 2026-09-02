@@ -4,6 +4,7 @@ import { expect } from 'chai';
 import { pacSync } from '../src/extension-common/core/pac-sync.js';
 import { storage } from '../src/extension-common/core/storage.js';
 import { httpLib } from '../src/extension-common/core/http-lib.js';
+import { errorHandlers } from '../src/extension-common/core/error-handlers.js';
 
 let mockStorage = {};
 let appliedProxyConfigs = [];
@@ -67,6 +68,7 @@ describe('PAC Sync: Pending Request Queue & Concurrency (Item 1)', () => {
   let originalDownload;
   let originalHttpLibGet;
   let originalApplyPacData;
+  let originalStorageSet;
 
   beforeEach(async () => {
     mockStorage = {};
@@ -97,6 +99,7 @@ describe('PAC Sync: Pending Request Queue & Concurrency (Item 1)', () => {
 
     originalDownload = pacSync.downloadPacFromProvider;
     originalApplyPacData = pacSync.applyPacData;
+    originalStorageSet = storage.set;
     originalHttpLibGet = httpLib.get;
     httpLib.get = async () => 'function FindProxyForURL(url, host) { return "DIRECT"; }';
   });
@@ -104,6 +107,7 @@ describe('PAC Sync: Pending Request Queue & Concurrency (Item 1)', () => {
   afterEach(() => {
     pacSync.downloadPacFromProvider = originalDownload;
     pacSync.applyPacData = originalApplyPacData;
+    storage.set = originalStorageSet;
     httpLib.get = originalHttpLibGet;
   });
 
@@ -273,5 +277,195 @@ describe('PAC Sync: Pending Request Queue & Concurrency (Item 1)', () => {
     expect(pacSync.rawPacData).to.include('fresh.example:443');
     expect(appliedCandidates).to.have.lengthOf(1);
     expect(appliedCandidates[0]).to.include('fresh.example:443');
+  });
+
+  it('rolls the active PAC back when its state cannot be persisted', async () => {
+    pacSync.downloadPacFromProvider = async (provider) =>
+      `function FindProxyForURL() { return "PROXY ${provider.distinctKey}.example:443"; }`;
+
+    await pacSync.syncWithPacProvider({ key: 'Антизапрет', ifUnattended: false });
+    const previousRawPac = pacSync.rawPacData;
+    storage.set = async (key, value) => {
+      if (key === 'antiCensorRu') {
+        throw new Error('storage quota exceeded');
+      }
+      return originalStorageSet.call(storage, key, value);
+    };
+
+    let syncError;
+    try {
+      await pacSync.syncWithPacProvider({ key: 'Антицензорити', ifUnattended: false });
+    } catch (err) {
+      syncError = err;
+    }
+
+    expect(syncError).to.be.an('error');
+    expect(syncError.message).to.include('storage quota exceeded');
+    expect(pacSync.currentPacProviderKey).to.equal('Антизапрет');
+    expect(pacSync.rawPacData).to.equal(previousRawPac);
+    const activeConfig = appliedProxyConfigs[appliedProxyConfigs.length - 1];
+    expect(activeConfig.pacScript.data).to.include('Antizapret.example:443');
+    expect(activeConfig.pacScript.data).to.not.include('Anticensority.example:443');
+  });
+
+  it('rolls a PAC clear back when the cleared state cannot be persisted', async () => {
+    pacSync.downloadPacFromProvider = async () =>
+      'function FindProxyForURL() { return "PROXY previous.example:443"; }';
+    await pacSync.syncWithPacProvider({ key: 'Антизапрет', ifUnattended: false });
+    const previousRawPac = pacSync.rawPacData;
+    storage.set = async (key, value) => {
+      if (key === 'antiCensorRu') {
+        throw new Error('storage unavailable');
+      }
+      return originalStorageSet.call(storage, key, value);
+    };
+
+    let clearError;
+    try {
+      await pacSync.clearPac();
+    } catch (err) {
+      clearError = err;
+    }
+
+    expect(clearError).to.be.an('error');
+    expect(pacSync.currentPacProviderKey).to.equal('Антизапрет');
+    expect(pacSync.rawPacData).to.equal(previousRawPac);
+    const activeConfig = appliedProxyConfigs[appliedProxyConfigs.length - 1];
+    expect(activeConfig.mode).to.equal('pac_script');
+    expect(activeConfig.pacScript.data).to.include('previous.example:443');
+  });
+
+  it('reapplies stored PAC after the profile proxy setting is unexpectedly cleared', async () => {
+    pacSync.downloadPacFromProvider = async () =>
+      'function FindProxyForURL() { return "PROXY recover.example:443"; }';
+    let extensionControlsProxy = true;
+    chrome.proxy.settings.get = (_opts, cb) => cb({
+      levelOfControl: extensionControlsProxy
+        ? 'controlled_by_this_extension'
+        : 'controllable_by_this_extension',
+      value: extensionControlsProxy
+        ? appliedProxyConfigs[appliedProxyConfigs.length - 1]
+        : { mode: 'system' },
+    });
+    const originalProxySet = chrome.proxy.settings.set;
+    chrome.proxy.settings.set = (options, cb) => {
+      extensionControlsProxy = true;
+      originalProxySet(options, cb);
+    };
+
+    await pacSync.syncWithPacProvider({ key: 'Антизапрет', ifUnattended: false });
+    extensionControlsProxy = false;
+    const reapplied = await pacSync.reconcileProxyState();
+
+    expect(reapplied).to.equal(true);
+    expect(extensionControlsProxy).to.equal(true);
+    expect(appliedProxyConfigs[appliedProxyConfigs.length - 1].pacScript.data)
+      .to.include('recover.example:443');
+  });
+
+  it('confirms a transient ownership conflict before warning and restores PAC', async () => {
+    pacSync.downloadPacFromProvider = async () =>
+      'function FindProxyForURL() { return "PROXY recover.example:443"; }';
+    await pacSync.syncWithPacProvider({ key: 'Антизапрет', ifUnattended: false });
+
+    const originalWaitForStability = pacSync._waitForControlStateStability;
+    const originalHandleControlState = errorHandlers.handleControlState;
+    const reportedStates = [];
+    let controlMode = 'hard-conflict';
+
+    pacSync._waitForControlStateStability = async () => {
+      controlMode = 'controllable';
+    };
+    errorHandlers.handleControlState = async (state) => reportedStates.push({ ...state });
+    chrome.proxy.settings.get = (_opts, cb) => {
+      const details = controlMode === 'hard-conflict'
+        ? {
+            levelOfControl: 'controlled_by_other_extensions',
+            value: { mode: 'system' },
+          }
+        : controlMode === 'controllable'
+          ? {
+              levelOfControl: 'controllable_by_this_extension',
+              value: { mode: 'system' },
+            }
+          : {
+              levelOfControl: 'controlled_by_this_extension',
+              value: appliedProxyConfigs[appliedProxyConfigs.length - 1],
+            };
+      cb(details);
+    };
+    chrome.proxy.settings.set = (options, cb) => {
+      appliedProxyConfigs.push(options.value);
+      controlMode = 'controlled';
+      cb();
+    };
+
+    try {
+      const reapplied = await pacSync.reconcileProxyState();
+
+      expect(reapplied).to.equal(true);
+      expect(controlMode).to.equal('controlled');
+      expect(reportedStates.some((state) =>
+        state.levelOfControl === 'controlled_by_other_extensions')).to.equal(false);
+      expect(appliedProxyConfigs[appliedProxyConfigs.length - 1].pacScript.data)
+        .to.include('recover.example:443');
+    } finally {
+      pacSync._waitForControlStateStability = originalWaitForStability;
+      errorHandlers.handleControlState = originalHandleControlState;
+    }
+  });
+
+  it('reports a persistent ownership conflict after confirmation', async () => {
+    pacSync.downloadPacFromProvider = async () =>
+      'function FindProxyForURL() { return "PROXY expected.example:443"; }';
+    await pacSync.syncWithPacProvider({ key: 'Антизапрет', ifUnattended: false });
+
+    const originalWaitForStability = pacSync._waitForControlStateStability;
+    const originalHandleControlState = errorHandlers.handleControlState;
+    const reportedStates = [];
+    const appliedCountBeforeConflict = appliedProxyConfigs.length;
+
+    pacSync._waitForControlStateStability = async () => {};
+    errorHandlers.handleControlState = async (state) => reportedStates.push({ ...state });
+    chrome.proxy.settings.get = (_opts, cb) => cb({
+      levelOfControl: 'controlled_by_other_extensions',
+      value: { mode: 'system' },
+    });
+
+    try {
+      const reapplied = await pacSync.reconcileProxyState();
+
+      expect(reapplied).to.equal(false);
+      expect(appliedProxyConfigs).to.have.lengthOf(appliedCountBeforeConflict);
+      expect(reportedStates).to.deep.equal([{
+        isControlled: false,
+        isControllable: false,
+        expectedControl: true,
+        levelOfControl: 'controlled_by_other_extensions',
+      }]);
+    } finally {
+      pacSync._waitForControlStateStability = originalWaitForStability;
+      errorHandlers.handleControlState = originalHandleControlState;
+    }
+  });
+
+  it('replaces a stale PAC still owned by this extension after an interrupted update', async () => {
+    pacSync.downloadPacFromProvider = async () =>
+      'function FindProxyForURL() { return "PROXY committed.example:443"; }';
+    await pacSync.syncWithPacProvider({ key: 'Антизапрет', ifUnattended: false });
+
+    appliedProxyConfigs.push({
+      mode: 'pac_script',
+      pacScript: {
+        data: 'function FindProxyForURL() { return "PROXY uncommitted.example:443"; }',
+        mandatory: true,
+      },
+    });
+    const reapplied = await pacSync.reconcileProxyState();
+
+    expect(reapplied).to.equal(true);
+    const activePac = appliedProxyConfigs[appliedProxyConfigs.length - 1].pacScript.data;
+    expect(activePac).to.include('committed.example:443');
+    expect(activePac).to.not.include('uncommitted.example:443');
   });
 });

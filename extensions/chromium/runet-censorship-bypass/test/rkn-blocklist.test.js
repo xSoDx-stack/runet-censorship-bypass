@@ -7,12 +7,12 @@ import {
 } from '../src/extension-common/core/rkn-blocklist.js';
 
 describe('RKN blocklist lookup links', () => {
-  it('preserves an HTTP(S) page URL while removing credentials and fragments', () => {
+  it('preserves an HTTP(S) page path while removing secrets and tracking data', () => {
     const result = normalizeRknLookupUrl(
       'https://user:secret@example.com/path?q=value#private-fragment'
     );
 
-    expect(result).to.equal('https://example.com/path?q=value');
+    expect(result).to.equal('https://example.com/path');
   });
 
   it('rejects browser and extension URLs', () => {

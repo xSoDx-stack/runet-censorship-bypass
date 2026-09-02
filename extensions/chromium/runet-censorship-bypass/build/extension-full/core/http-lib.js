@@ -14,6 +14,74 @@ function decodeUtf8(decoder, value, options) {
 }
 
 export const httpLib = {
+  async probe(url, {
+    timeoutMs = 10000,
+    validateFinalUrl = null,
+  } = {}) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const cancelBody = async (response) => {
+      if (response?.body && typeof response.body.cancel === 'function') {
+        try {
+          await response.body.cancel();
+        } catch { /* response may already be closed */ }
+      }
+    };
+
+    const request = async (method) => {
+      const options = {
+        cache: 'no-store',
+        method,
+        signal: controller.signal,
+      };
+      if (method === 'GET') {
+        options.headers = new Headers({ Range: 'bytes=0-0' });
+      }
+      const response = await fetch(url, options);
+      if (typeof validateFinalUrl === 'function') {
+        const validation = await validateFinalUrl(response.url || url, url);
+        if (validation === false || (validation && validation.valid === false)) {
+          const message = validation && validation.error
+            ? validation.error
+            : 'Конечный адрес ответа не прошёл проверку безопасности.';
+          await cancelBody(response);
+          throw clarify(new Error(message), message);
+        }
+      }
+      return response;
+    };
+
+    try {
+      let res = await request('HEAD');
+      if (res.status === 405 || res.status === 501) {
+        await cancelBody(res);
+        res = await request('GET');
+      }
+
+      const status = res.status;
+      if (!((status >= 200 && status < 300) || status === 304)) {
+        await cancelBody(res);
+        throw clarify(
+          new Error(`HTTP ${status}`),
+          `Получен ответ с неудачным HTTP-кодом ${status}.`,
+        );
+      }
+
+      await cancelBody(res);
+      return res;
+    } catch (err) {
+      if (err instanceof Warning) {
+        throw err;
+      }
+      if (err.name === 'AbortError') {
+        throw clarify(err, 'Таймаут соединения с сервером.');
+      }
+      throw clarify(err, checkCon);
+    } finally {
+      clearTimeout(timer);
+    }
+  },
+
   async ifModifiedSince(url, lastModified, { timeoutMs = 10000 } = {}) {
     if (url.startsWith('data:')) {
       return false;

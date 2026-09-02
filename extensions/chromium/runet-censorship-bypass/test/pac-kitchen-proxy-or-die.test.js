@@ -37,6 +37,22 @@ function FindProxyForURL(url, host) {
     expect(mods.filteredCustomsString).to.equal('HTTPS secure-default.example:443');
   });
 
+  it('rejects unsupported SOCKS credentials and excessive proxy lists', () => {
+    const [socksError] = createPacModifiers({
+      customProxyStringRaw: 'SOCKS5 user:password@socks.example:1080',
+    });
+    expect(socksError).to.be.instanceOf(TypeError);
+    expect(socksError.message).to.include('не поддерживает логин и пароль');
+
+    const tooMany = Array.from(
+      { length: 101 },
+      (_, index) => `HTTPS proxy-${index}.example:443`,
+    ).join('\n');
+    const [limitError] = createPacModifiers({ customProxyStringRaw: tooMany });
+    expect(limitError).to.be.instanceOf(RangeError);
+    expect(limitError.message).to.include('Максимум: 100');
+  });
+
   function evaluateCookedPac(cookedPacCode) {
     const sandbox = {};
     vm.createContext(sandbox);
@@ -162,6 +178,28 @@ function FindProxyForURL(url, host) {
     expect(findProxyOff('https://blocked.example/path', 'blocked.example')).to.equal('HTTPS pac-proxy.example:8443; DIRECT');
     // Unblocked site remains DIRECT
     expect(findProxyOff('https://unblocked.example/path', 'unblocked.example')).to.equal('DIRECT');
+  });
+
+  it('an enabled empty whitelist routes every host DIRECT', () => {
+    const mods = {
+      ifMindWhitelist: true,
+      whitelist: [],
+      ifProxyOrDie: true,
+      ifUsePacScriptProxies: true,
+      filteredCustomsString: 'HTTPS custom-node.example:443',
+    };
+    const findProxy = evaluateCookedPac(cookPac(basePac, mods));
+
+    expect(findProxy('https://blocked.example/', 'blocked.example')).to.equal('DIRECT');
+    expect(findProxy('https://unblocked.example/', 'unblocked.example')).to.equal('DIRECT');
+  });
+
+  it('a missing original PAC function fails closed when Proxy Or Die is enabled', () => {
+    const findProxy = evaluateCookedPac(cookPac('var harmless = true;', {
+      ifProxyOrDie: true,
+      ifUsePacScriptProxies: true,
+    }));
+    expect(findProxy('https://example.com/', 'example.com')).to.equal('PROXY 127.0.0.1:0');
   });
 
   it('Empty proxy list after filtering with ProxyOrDie ON must fail-closed (PROXY 127.0.0.1:0) and NEVER leak DIRECT', () => {

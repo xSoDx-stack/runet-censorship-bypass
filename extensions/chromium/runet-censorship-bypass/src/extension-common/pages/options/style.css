@@ -904,6 +904,11 @@ input:checked + .slider:before {
   color: var(--warning);
 }
 
+.proxy-status-tag.stale {
+  background: var(--bg-surface-hover);
+  color: var(--text-secondary);
+}
+
 .proxy-actions {
   display: flex;
   align-items: center;

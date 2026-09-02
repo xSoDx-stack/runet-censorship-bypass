@@ -1,10 +1,38 @@
 'use strict';
 
 import { storage } from './storage.js';
-import { logger, sanitizeLogString } from './logger.js';
+import { logger, sanitizeLogData, sanitizeLogString } from './logger.js';
 
 const HANDLERS_STATE_KEY = 'handlers-state';
 const LAST_ERRORS_MAX = 30;
+const PROXY_ERROR_THROTTLE_MS = 5000;
+const NOTIFICATION_KEYS = ['pac-error', 'ext-error', 'no-control'];
+const HARD_PROXY_CONTROL_LEVELS = new Set([
+  'controlled_by_other_extensions',
+  'not_controllable',
+]);
+
+export function isHardProxyControlConflict({
+  isControlled = false,
+  isControllable = false,
+  expectedControl = false,
+  levelOfControl = 'unknown',
+} = {}) {
+  return expectedControl &&
+    !isControlled &&
+    !isControllable &&
+    HARD_PROXY_CONTROL_LEVELS.has(levelOfControl);
+}
+
+function getControlLossMessage(levelOfControl) {
+  if (levelOfControl === 'controlled_by_other_extensions') {
+    return 'Настройки прокси перехвачены другим расширением с более высоким приоритетом.';
+  }
+  if (levelOfControl === 'not_controllable') {
+    return 'Настройки прокси заблокированы политикой или параметрами браузера.';
+  }
+  return 'Расширение не может управлять настройками прокси.';
+}
 
 class ErrorHandlersManager {
   constructor() {
@@ -17,6 +45,8 @@ class ErrorHandlersManager {
     this.isInitialized = false;
     this._listenersRegistered = false;
     this._noControlActive = false;
+    this._lastProxyErrorSignature = '';
+    this._lastProxyErrorAt = 0;
   }
 
   setupListeners() {
@@ -55,35 +85,65 @@ class ErrorHandlersManager {
 
     const saved = await storage.get(HANDLERS_STATE_KEY, null);
     if (saved && typeof saved === 'object') {
-      Object.assign(this.notificationsEnabled, saved);
+      const savedNotifications = saved.notificationsEnabled &&
+        typeof saved.notificationsEnabled === 'object'
+        ? saved.notificationsEnabled
+        : saved;
+      for (const key of NOTIFICATION_KEYS) {
+        if (typeof savedNotifications[key] === 'boolean') {
+          this.notificationsEnabled[key] = savedNotifications[key];
+        }
+      }
+      this._noControlActive = saved.noControlActive === true;
     }
     this.isInitialized = true;
   }
 
+  async _persistState() {
+    await storage.set(HANDLERS_STATE_KEY, {
+      notificationsEnabled: { ...this.notificationsEnabled },
+      noControlActive: this._noControlActive,
+    });
+  }
+
   handleProxyError(details) {
-    console.warn('[Proxy Error]:', details);
+    const safeDetails = sanitizeLogData(details || {});
+    const signature = JSON.stringify([
+      safeDetails.error || '',
+      safeDetails.details || '',
+      Boolean(safeDetails.fatal),
+    ]);
+    const now = Date.now();
+    if (signature === this._lastProxyErrorSignature &&
+        now - this._lastProxyErrorAt < PROXY_ERROR_THROTTLE_MS) {
+      return;
+    }
+    this._lastProxyErrorSignature = signature;
+    this._lastProxyErrorAt = now;
+
+    console.warn('[Proxy Error]:', safeDetails);
     const errItem = {
       type: 'proxy',
-      error: details.error || 'Proxy error',
-      details: details.details || '',
-      fatal: details.fatal || false,
-      timestamp: Date.now(),
+      error: safeDetails.error || 'Proxy error',
+      details: safeDetails.details || '',
+      fatal: safeDetails.fatal || false,
+      timestamp: now,
     };
     this.addError(errItem);
 
     logger.add({
-      level: details.fatal ? 'error' : 'warn',
+      level: safeDetails.fatal ? 'error' : 'warn',
       category: 'pac',
-      title: details.error || 'Ошибка PAC / Proxy',
-      message: details.details || 'Браузер сообщил об ошибке в PAC-скрипте или прокси-соединении',
-      details,
+      title: safeDetails.error || 'Ошибка PAC / Proxy',
+      message: safeDetails.details || 'Браузер сообщил об ошибке в PAC-скрипте или прокси-соединении',
+      details: safeDetails,
     });
 
     if (this.notificationsEnabled['pac-error']) {
       this.notify(
         'pac-error',
         'Ошибка PAC-скрипта / Прокси',
-        details.details || details.error || 'Прокси-сервер сообщил об ошибке'
+        safeDetails.details || safeDetails.error || 'Прокси-сервер сообщил об ошибке'
       );
     }
   }
@@ -115,7 +175,7 @@ class ErrorHandlersManager {
 
   async setNotificationOption(key, enabled) {
     this.notificationsEnabled[key] = Boolean(enabled);
-    await storage.set(HANDLERS_STATE_KEY, this.notificationsEnabled);
+    await this._persistState();
   }
 
   handleExtensionError(error) {
@@ -132,21 +192,57 @@ class ErrorHandlersManager {
     }
   }
 
-  handleControlState(isControlled, expectedControl) {
-    if (isControlled || !expectedControl) {
-      this._noControlActive = false;
+  async handleControlState({
+    isControlled = false,
+    isControllable = false,
+    expectedControl = false,
+    levelOfControl = 'unknown',
+  } = {}) {
+    const hasHardConflict = isHardProxyControlConflict({
+      isControlled,
+      isControllable,
+      expectedControl,
+      levelOfControl,
+    });
+
+    if (!hasHardConflict) {
+      if (this._noControlActive) {
+        this._noControlActive = false;
+        try {
+          await this._persistState();
+        } catch (err) {
+          console.warn('[Error Handlers] Failed to persist restored proxy control:', err);
+        }
+        if (chrome.notifications?.clear) {
+          chrome.notifications.clear('no-control', () => {
+            if (chrome.runtime.lastError) { /* ignore */ }
+          });
+        }
+      }
       return;
     }
     if (this._noControlActive) return;
     this._noControlActive = true;
 
-    const message = 'Настройки прокси контролируются браузером, политикой или другим расширением.';
+    try {
+      await this._persistState();
+    } catch (err) {
+      console.warn('[Error Handlers] Failed to persist lost proxy control:', err);
+    }
+
+    const message = getControlLossMessage(levelOfControl);
     this.addError({
       type: 'no-control',
       error: message,
       timestamp: Date.now(),
     });
-    logger.warn('system', 'Утерян контроль настроек прокси', message);
+    logger.add({
+      level: 'warn',
+      category: 'system',
+      title: 'Утерян контроль настроек прокси',
+      message,
+      details: { levelOfControl },
+    });
     if (this.notificationsEnabled['no-control']) {
       this.notify('no-control', 'Утерян контроль прокси', message);
     }
@@ -160,6 +256,8 @@ class ErrorHandlersManager {
       'no-control': true,
     };
     this._noControlActive = false;
+    this._lastProxyErrorSignature = '';
+    this._lastProxyErrorAt = 0;
     this.isInitialized = false;
   }
 

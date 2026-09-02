@@ -12,10 +12,12 @@ export function normalizeRknLookupUrl(rawUrl) {
       return '';
     }
 
-    // Credentials and fragments are not part of a registry lookup and may
-    // contain sensitive data that should not be copied to a third-party form.
+    // Credentials, query parameters and fragments are not required for a
+    // registry lookup and may contain sensitive data that must not be copied
+    // to a third-party form.
     parsed.username = '';
     parsed.password = '';
+    parsed.search = '';
     parsed.hash = '';
     return parsed.href;
   } catch {

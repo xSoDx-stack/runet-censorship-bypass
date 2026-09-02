@@ -166,7 +166,10 @@ export function buildProxyCredentialsMap(customProxyStringRaw = '') {
 
     for (const line of lines) {
       const parsed = utils.parseProxyScheme(line);
-      if (parsed && parsed.hostname && parsed.username && parsed.port) {
+      if (
+        parsed && parsed.hostname && parsed.username && parsed.port &&
+        (parsed.type === 'HTTP' || parsed.type === 'HTTPS')
+      ) {
         const port = parsed.port;
         const creds = {
           username: String(parsed.username),
@@ -434,13 +437,9 @@ export function setupAuthListener() {
       ['asyncBlocking']
     );
 
-    const cleanup = (details) => {
-      requestTries.delete(details.requestId);
-      clearProxyAuthAttempts(details.requestId).catch((err) => {
-        console.warn('[Proxy Auth] Failed to clear completed request state:', err);
-      });
-    };
-    chrome.webRequest.onCompleted.addListener(cleanup, { urls: ['<all_urls>'] });
-    chrome.webRequest.onErrorOccurred.addListener(cleanup, { urls: ['<all_urls>'] });
+    // Retry entries expire on the next authentication challenge. Avoid global
+    // onCompleted/onErrorOccurred listeners: they wake the MV3 worker and read
+    // session storage for every request in the browser, even when no proxy
+    // authentication took place.
   }
 }

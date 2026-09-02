@@ -64,13 +64,19 @@ class IpToHostManager {
     // Safe IP extraction: handles bare IPs, host:port, [ipv6]:port and bare [ipv6]
     let bareIp = cleanHost;
     if (cleanHost.startsWith('[')) {
-      bareIp = cleanHost.replace(/^\[([^\]]+)\](?::\d+)?$/, '$1');
-    } else if (cleanHost.includes(':')) {
+      bareIp = cleanHost.replace(/^\[([^]]+)](?::\d+)?$/, '$1');
+    } else if ((cleanHost.match(/:/g) || []).length === 1) {
       bareIp = cleanHost.split(':')[0];
     }
 
-    const isIPv4 = /^(\d{1,3}\.){3}\d{1,3}$/.test(bareIp);
-    const isIPv6 = bareIp.includes(':') || bareIp === 'localhost';
+    const isIPv4 = /^(\d{1,3}\.){3}\d{1,3}$/.test(bareIp) &&
+      bareIp.split('.').every((octet) => Number(octet) <= 255);
+    let isIPv6 = false;
+    if (bareIp.includes(':')) {
+      try {
+        isIPv6 = Boolean(new URL(`http://[${bareIp}]/`).hostname);
+      } catch { /* not a valid IPv6 literal */ }
+    }
     if (isIPv4 || isIPv6) {
       this.ipToHostMap[bareIp] = cleanHost;
     }
@@ -86,7 +92,7 @@ class IpToHostManager {
 
   updateFromPac(pacData) {
     if (!pacData || typeof pacData !== 'string') return;
-    const matches = pacData.matchAll(/(?:HTTPS|PROXY|SOCKS5?)\s+([a-zA-Z0-9.\-_:\[\]]+)/gi);
+    const matches = pacData.matchAll(/(?:HTTPS|PROXY|SOCKS5?)\s+([^\s;'"`]+)/gi);
     for (const match of matches) {
       if (match[1] && match[1] !== 'DIRECT') {
         this.addHost(match[1]);

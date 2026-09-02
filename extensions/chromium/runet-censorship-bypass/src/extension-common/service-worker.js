@@ -35,7 +35,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 if (chrome.proxy?.settings?.onChange) {
   chrome.proxy.settings.onChange.addListener(() => {
     appState.ensureInitialized()
-      .then(() => pacSync.updateControlState())
+      .then(() => pacSync.reconcileProxyState())
       .catch((err) => console.warn('[Proxy Control State Warning]:', err));
   });
 }

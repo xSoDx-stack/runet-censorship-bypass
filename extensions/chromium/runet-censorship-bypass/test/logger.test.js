@@ -1,7 +1,7 @@
 'use strict';
 
 import { expect } from 'chai';
-import { sanitizeLogString, sanitizeLogData } from '../src/extension-common/core/logger.js';
+import { logger, sanitizeLogString, sanitizeLogData } from '../src/extension-common/core/logger.js';
 
 describe('Logger: sanitizeLogString & sanitizeLogData', () => {
   it('should mask user:pass@ in proxy and URL strings', () => {
@@ -49,5 +49,46 @@ describe('Logger: sanitizeLogString & sanitizeLogData', () => {
     expect(sanitized.details.auth).to.equal('***');
     expect(sanitized.details.rawProxy).to.equal('HTTPS ***:***@1.2.3.4:443');
     expect(sanitized.details.host).to.equal('1.2.3.4');
+  });
+
+  it('masks cookie headers, JSON secrets and common access-token fields', () => {
+    const raw = 'Cookie: sid=private; token=value\n{"api_key":"key123", "access_token":"access123"}';
+    const sanitized = sanitizeLogString(raw);
+    expect(sanitized).to.not.include('private');
+    expect(sanitized).to.not.include('key123');
+    expect(sanitized).to.not.include('access123');
+
+    const data = sanitizeLogData({
+      sessionId: 'session-secret',
+      refresh_token: 'refresh-secret',
+    });
+    expect(data.sessionId).to.equal('***');
+    expect(data.refresh_token).to.equal('***');
+  });
+
+  it('aggregates a repeated proxy error instead of creating a log storm', () => {
+    const originalScheduleSave = logger.scheduleSave;
+    logger.resetRuntimeState();
+    logger.scheduleSave = () => {};
+
+    try {
+      const first = logger.error(
+        'proxy',
+        'net::ERR_PROXY_CONNECTION_FAILED',
+        'Браузер не смог установить соединение с прокси-сервером',
+      );
+      const repeated = logger.error(
+        'proxy',
+        'net::ERR_PROXY_CONNECTION_FAILED',
+        'Браузер не смог установить соединение с прокси-сервером',
+      );
+
+      expect(repeated).to.equal(first);
+      expect(first.count).to.equal(2);
+      expect(logger.getLogs()).to.have.lengthOf(1);
+    } finally {
+      logger.scheduleSave = originalScheduleSave;
+      logger.resetRuntimeState();
+    }
   });
 });

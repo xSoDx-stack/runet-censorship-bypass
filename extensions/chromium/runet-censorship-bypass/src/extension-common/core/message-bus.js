@@ -7,10 +7,20 @@ import { errorHandlers } from './error-handlers.js';
 import { storage } from './storage.js';
 import { httpLib } from './http-lib.js';
 import { checkProxyHealth } from './proxy-checker.js';
+import {
+  loadProxyHealthCache,
+  pruneProxyHealthCache,
+  saveProxyHealthResult,
+} from './proxy-health-cache.js';
+import {
+  checkLocalProxyService,
+  getLocalProxyService,
+} from './local-proxy-services.js';
 import { logger } from './logger.js';
 import { formatErrorMessage } from './errors-lib.js';
 import { ipToHost } from './ip-to-host.js';
 import { clearProxyAuthAttempts, resetProxyCredentialsState } from './proxy-auth.js';
+import { utils } from './utils.js';
 
 const FALLBACK_CONNECTION_TEST_URL = PAC_PROVIDERS['Антизапрет'].pacUrls[0];
 
@@ -66,6 +76,9 @@ export function setupMessageBus() {
     if (sender && sender.id && chrome.runtime?.id && sender.id !== chrome.runtime.id) {
       return false;
     }
+    if (sender && sender.url && !sender.url.startsWith(chrome.runtime.getURL(''))) {
+      return false;
+    }
 
     if (!message || !message.action) {
       return false;
@@ -78,6 +91,12 @@ export function setupMessageBus() {
         case 'GET_STATE': {
           const syncState = pacSync.getState();
           const pacMods = await pacKitchen.getPacMods();
+          const proxyList = utils.parseCustomProxies(pacMods.customProxyStringRaw || '')
+            .map((proxy) => proxy.raw);
+          const proxyHealthMap = await loadProxyHealthCache(proxyList).catch((err) => {
+            console.warn('[Proxy Health] Failed to load cached results:', err);
+            return {};
+          });
           const configs = getDefaultConfigs();
           const defaultConfigs = {};
           for (const k in configs) {
@@ -102,6 +121,7 @@ export function setupMessageBus() {
               version: chrome.runtime.getManifest().version,
               exceptionStats,
               currentSiteMatch,
+              proxyHealthMap,
             },
           };
         }
@@ -140,16 +160,15 @@ export function setupMessageBus() {
           const target = message.target || 'excluded';
           await pacKitchen.updatePacMods((current) => {
             const exceptions = Object.assign({}, current.exceptions || {});
-            const whitelist = [...(current.whitelist || [])];
+            const whitelistSet = new Set(current.whitelist || []);
             if (target === 'included') {
               domains.forEach((d) => (exceptions[d] = true));
             } else if (target === 'excluded') {
               domains.forEach((d) => (exceptions[d] = false));
             } else if (target === 'whitelist') {
-              domains.forEach((d) => {
-                if (!whitelist.includes(d)) whitelist.push(d);
-              });
+              domains.forEach((d) => whitelistSet.add(d));
             }
+            const whitelist = [...whitelistSet];
             return Object.assign({}, current, { exceptions, whitelist });
           });
           await pacSync.reapplyCurrentPac();
@@ -213,13 +232,56 @@ export function setupMessageBus() {
           });
           await pacSync.reapplyCurrentPac();
 
+          if (Object.prototype.hasOwnProperty.call(message.mods || {}, 'customProxyStringRaw')) {
+            const proxyList = utils.parseCustomProxies(parsedMods.customProxyStringRaw || '')
+              .map((proxy) => proxy.raw);
+            await pruneProxyHealthCache(proxyList).catch((err) => {
+              console.warn('[Proxy Health] Failed to prune cached results:', err);
+            });
+          }
+
           const returnMods = serializePacMods(parsedMods, Boolean(message.includeExceptions));
           return { success: true, data: returnMods };
         }
 
         case 'CHECK_PROXY_HEALTH': {
           const res = await checkProxyHealth(message.proxy);
-          return { success: true, data: res };
+          const checkedAt = Date.now();
+          const cached = await saveProxyHealthResult(message.proxy, res, checkedAt)
+            .catch((err) => {
+              console.warn('[Proxy Health] Failed to persist result:', err);
+              return null;
+            });
+          return {
+            success: true,
+            data: Object.assign({}, res, { checkedAt: cached?.checkedAt || checkedAt }),
+          };
+        }
+
+        case 'SET_LOCAL_PROXY_ENABLED': {
+          const service = getLocalProxyService(message.service);
+          const enabled = Boolean(message.enabled);
+          let health = null;
+
+          if (enabled) {
+            health = await checkLocalProxyService(message.service, checkProxyHealth);
+            if (!health.ok) {
+              return { success: false, error: health.error, data: { health } };
+            }
+          }
+
+          const parsedMods = await pacKitchen.updatePacMods((current) => {
+            return Object.assign({}, current, { [service.modKey]: enabled });
+          });
+          await pacSync.reapplyCurrentPac();
+
+          return {
+            success: true,
+            data: {
+              pacMods: serializePacMods(parsedMods),
+              health,
+            },
+          };
         }
 
         case 'GET_PAC_SCRIPT': {
@@ -235,8 +297,9 @@ export function setupMessageBus() {
         }
 
         case 'SET_RAW_PAC': {
-          await pacSync.applyPacData(message.pacData);
-          await pacSync.persistState();
+          // Restricted to trusted extension pages by the sender-origin guard
+          // above; applyPacData also performs lexical PAC validation.
+          await pacSync.setRawPacData(message.pacData);
           return { success: true };
         }
 
@@ -282,7 +345,14 @@ export function setupMessageBus() {
           try {
             const syncState = pacSync.getState();
             const testUrl = getConnectionTestUrl(syncState);
-            await httpLib.ifModifiedSince(testUrl, null);
+            const validation = utils.validatePacUrl(testUrl);
+            if (!validation.valid) {
+              throw new Error(validation.error);
+            }
+            await httpLib.probe(validation.sanitizedUrl, {
+              validateFinalUrl: (finalUrl, requestedUrl) =>
+                utils.validatePacResponseUrl(requestedUrl, finalUrl),
+            });
             const latency = Date.now() - startTime;
             return { success: true, latency };
           } catch (err) {
@@ -299,6 +369,9 @@ export function setupMessageBus() {
           ipToHost.reset();
           await pacSync.clearPac({ persist: false });
           await pacSync.syncWithPacProvider({ key: 'Антизапрет', ifUnattended: true });
+          // Drain pending log writes created before/during reset, then remove
+          // them so an old callback cannot resurrect cleared diagnostics.
+          await logger.clear();
           logger.resetRuntimeState();
           errorHandlers.resetRuntimeState();
           await appState.reset();

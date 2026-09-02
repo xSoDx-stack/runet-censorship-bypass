@@ -31,10 +31,10 @@ function FindProxyForURL(url, host) {
 
     // 1. Probe endpoints must route via candidate test proxy
     expect(sandbox.FindProxyForURL('https://1.1.1.1/cdn-cgi/trace', '1.1.1.1')).to.equal(testProxyScheme);
-    expect(sandbox.FindProxyForURL('https://cloudflare.com/', 'cloudflare.com')).to.equal(testProxyScheme);
-    expect(sandbox.FindProxyForURL('https://cp.cloudflare.com/generate_204', 'cp.cloudflare.com')).to.equal(testProxyScheme);
-    expect(sandbox.FindProxyForURL('https://connectivitycheck.gstatic.com/generate_204', 'connectivitycheck.gstatic.com')).to.equal(testProxyScheme);
-    expect(sandbox.FindProxyForURL('https://dns.google/resolve', 'dns.google')).to.equal(testProxyScheme);
+    expect(sandbox.FindProxyForURL('https://cloudflare.com/', 'cloudflare.com')).to.equal('DIRECT');
+    expect(sandbox.FindProxyForURL('https://cp.cloudflare.com/generate_204', 'cp.cloudflare.com')).to.equal('DIRECT');
+    expect(sandbox.FindProxyForURL('https://connectivitycheck.gstatic.com/generate_204', 'connectivitycheck.gstatic.com')).to.equal('DIRECT');
+    expect(sandbox.FindProxyForURL('https://dns.google/resolve', 'dns.google')).to.equal('DIRECT');
 
     // 2. Normal traffic MUST be routed through the original PAC without DIRECT leakage
     expect(sandbox.FindProxyForURL('http://normal.example/path', 'normal.example')).to.equal('PROXY original.example:8080');
@@ -176,6 +176,39 @@ describe('Proxy Health Check: Concurrency & State Race Protection (P1-1)', () =>
     const result = await checkProxyHealth('BANANA proxy.example:1234');
 
     expect(result).to.deep.equal({ ok: false, error: 'Не указан хост или порт' });
+  });
+
+  it('rejects SOCKS authentication with an actionable explanation', async () => {
+    const { checkProxyHealth } = await import('../src/extension-common/core/proxy-checker.js');
+    const { getTemporaryCredentialsMap } = await import('../src/extension-common/core/proxy-auth.js');
+    const result = await checkProxyHealth('SOCKS5 user:password@socks.example:1080');
+
+    expect(result.ok).to.equal(false);
+    expect(result.error).to.include('не поддерживает авторизацию');
+    expect(getTemporaryCredentialsMap()).to.deep.equal({});
+  });
+
+  it('cleans temporary credentials when a preflight operation fails', async () => {
+    const { checkProxyHealth } = await import('../src/extension-common/core/proxy-checker.js');
+    const { pacKitchen } = await import('../src/extension-common/core/pac-kitchen.js');
+    const { getTemporaryCredentialsMap } = await import('../src/extension-common/core/proxy-auth.js');
+    const originalGetPacMods = pacKitchen.getPacMods;
+    pacKitchen.getPacMods = async () => {
+      throw new Error('preflight failed');
+    };
+
+    try {
+      let error;
+      try {
+        await checkProxyHealth('HTTPS user:password@proxy.example:443');
+      } catch (err) {
+        error = err;
+      }
+      expect(error).to.be.an('error').with.property('message', 'preflight failed');
+      expect(getTemporaryCredentialsMap()).to.deep.equal({});
+    } finally {
+      pacKitchen.getPacMods = originalGetPacMods;
+    }
   });
 });
 

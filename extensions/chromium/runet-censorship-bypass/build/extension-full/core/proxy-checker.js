@@ -33,7 +33,7 @@ var __originalFindProxyForURL = (typeof FindProxyForURL === 'function')
   : function(url, host) { return "DIRECT"; };
 
 FindProxyForURL = function(url, host) {
-  if (host === '1.1.1.1' || host === 'cloudflare.com' || host === 'cp.cloudflare.com' || host === 'connectivitycheck.gstatic.com' || host === 'dns.google') {
+  if (host === '1.1.1.1') {
     return ${JSON.stringify(testProxyScheme)};
   }
   return __originalFindProxyForURL(url, host);
@@ -98,14 +98,15 @@ async function executeSingleProxyHealthCheck(proxyString) {
     hasAuth: Boolean(parsed.username),
   };
 
-  // 1. Register temporary credentials for test probe if present (in-memory only)
-  if (parsed.username) {
-    registerTemporaryCredentials(parsed.hostname, parsed.port, parsed.username, parsed.password);
+  const rawType = parsed.type.toUpperCase();
+  if (parsed.hasAuth && rawType.startsWith('SOCKS')) {
+    const msg = 'Chromium не поддерживает авторизацию по логину и паролю для SOCKS4/SOCKS5';
+    logger.warn('auth', 'Неподдерживаемая авторизация SOCKS', msg, proxyMeta);
+    return { ok: false, error: msg };
   }
 
-  // 2. Map protocol to PAC keyword
+  // 1. Map protocol to PAC keyword
   // P1.3: Use explicit isSocks flag instead of fragile includes(';') detection
-  const rawType = parsed.type.toUpperCase();
   let pacKeyword;
   let isSocks = false;
 
@@ -123,7 +124,7 @@ async function executeSingleProxyHealthCheck(proxyString) {
     ? `SOCKS5 ${parsed.hostname}:${parsed.port}; SOCKS ${parsed.hostname}:${parsed.port}`
     : `${pacKeyword} ${parsed.hostname}:${parsed.port}`;
 
-  // 3. Resolve active base PAC script with full top-level scope preservation
+  // 2. Resolve active base PAC script with full top-level scope preservation
   let basePacScript = '';
   if (pacSync.currentPacProviderKey !== 'none') {
     if (pacSync.cookedPacData) {
@@ -141,7 +142,7 @@ async function executeSingleProxyHealthCheck(proxyString) {
     basePacScript = 'function FindProxyForURL(url, host) { return "DIRECT"; }';
   }
 
-  // 4. Construct layered Test PAC via generateHealthCheckPac
+  // 3. Construct layered Test PAC via generateHealthCheckPac
   const testPac = generateHealthCheckPac(basePacScript, testProxyScheme);
 
   const activeMods = await pacKitchen.getPacMods();
@@ -160,6 +161,12 @@ async function executeSingleProxyHealthCheck(proxyString) {
   const previousConfig = previousDetails && previousDetails.value
     ? previousDetails.value
     : null;
+
+  // All asynchronous preflight steps are complete. Register credentials only
+  // for the short interval in which the probe PAC may challenge for auth.
+  if (parsed.username) {
+    registerTemporaryCredentials(parsed.hostname, parsed.port, parsed.username, parsed.password);
+  }
 
   try {
     // Apply layered test proxy configuration
@@ -222,10 +229,7 @@ async function executeSingleProxyHealthCheck(proxyString) {
       }
     }
   } finally {
-    // 5. Guaranteed cleanup of temporary credentials in memory
-    unregisterTemporaryCredentials(parsed.hostname, parsed.port);
-
-    // 6. Restore exactly what was active before the probe. Permanent proxy
+    // 4. Restore exactly what was active before the probe. Permanent proxy
     // changes wait on the same lock and will run immediately afterwards.
     try {
       await assertProxySettingsControllable();
@@ -247,6 +251,9 @@ async function executeSingleProxyHealthCheck(proxyString) {
       const msg = `Не удалось восстановить настройки прокси после проверки: ${restoreErr.message || restoreErr}`;
       logger.error('proxy', 'Критическая ошибка восстановления прокси', msg);
       restorationError = new Error(msg);
+    }
+    if (parsed.username) {
+      unregisterTemporaryCredentials(parsed.hostname, parsed.port);
     }
   }
 

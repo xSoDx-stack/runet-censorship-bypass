@@ -2,8 +2,9 @@
 
 import { expect } from 'chai';
 import { utils } from '../src/extension-common/core/utils.js';
-import { PAC_PROVIDERS } from '../src/extension-common/core/pac-sync.js';
+import { pacSync, PAC_PROVIDERS } from '../src/extension-common/core/pac-sync.js';
 import { pacKitchen } from '../src/extension-common/core/pac-kitchen.js';
+import { httpLib } from '../src/extension-common/core/http-lib.js';
 
 // Setup chrome mock for node tests
 let mockStorage = {};
@@ -62,15 +63,18 @@ describe('Custom PAC URL Pipeline and Validation', () => {
   });
 
   describe('URL Validation Rules (utils.validatePacUrl)', () => {
-    it('should accept valid HTTPS and HTTP PAC URLs', () => {
+    it('should accept HTTPS and loopback HTTP PAC URLs only', () => {
       const httpsRes = utils.validatePacUrl('https://mycompany.com/proxy.pac');
       expect(httpsRes.valid).to.be.true;
       expect(httpsRes.sanitizedUrl).to.equal('https://mycompany.com/proxy.pac');
       expect(httpsRes.isHttp).to.be.false;
 
-      const httpRes = utils.validatePacUrl('http://192.168.1.100:8080/wpad.dat');
+      const httpRes = utils.validatePacUrl('http://127.0.0.1:8080/wpad.dat');
       expect(httpRes.valid).to.be.true;
       expect(httpRes.isHttp).to.be.true;
+
+      const privateLanHttp = utils.validatePacUrl('http://192.168.1.100/proxy.pac');
+      expect(privateLanHttp.valid).to.be.false;
 
       const publicHttp = utils.validatePacUrl('http://example.com/proxy.pac');
       expect(publicHttp.valid).to.be.false;
@@ -111,13 +115,13 @@ describe('Custom PAC URL Pipeline and Validation', () => {
       expect(downgrade.error).to.include('HTTPS');
 
       expect(utils.validatePacResponseUrl(
-        'http://192.168.1.10/proxy.pac',
-        'http://192.168.1.11/proxy.pac'
+        'http://127.0.0.1/proxy.pac',
+        'http://localhost/proxy.pac'
       ).valid).to.be.true;
 
       expect(utils.validatePacResponseUrl(
-        'http://192.168.1.10/proxy.pac',
-        'http://public.example/proxy.pac'
+        'http://127.0.0.1/proxy.pac',
+        'http://192.168.1.10/proxy.pac'
       ).valid).to.be.false;
     });
   });
@@ -157,6 +161,52 @@ function FindProxyForURL(url, host) {
       expect(PAC_PROVIDERS.customPacUrl.maxBytes).to.equal(undefined);
       expect(PAC_PROVIDERS['Антицензорити'].maxBytes).to.be.greaterThan(11642139);
       expect(PAC_PROVIDERS['Антизапрет'].maxBytes).to.equal(PAC_PROVIDERS['Антицензорити'].maxBytes);
+    });
+  });
+
+  describe('Trusted provider redirects', () => {
+    let originalHttpGet;
+    let originalConsoleWarn;
+
+    beforeEach(() => {
+      originalHttpGet = httpLib.get;
+      originalConsoleWarn = console.warn;
+      console.warn = () => {};
+    });
+
+    afterEach(() => {
+      httpLib.get = originalHttpGet;
+      console.warn = originalConsoleWarn;
+    });
+
+    it('allows the content-addressed IPFS gateway used by Antizapret', async () => {
+      httpLib.get = async (_url, options) => {
+        const validation = options.validateFinalUrl(
+          'https://bafy-example.ipfs.dweb.link/proxy.pac',
+        );
+        expect(validation.valid).to.equal(true);
+        return 'function FindProxyForURL() { return "DIRECT"; }';
+      };
+
+      const pac = await pacSync.downloadPacFromProvider(PAC_PROVIDERS['Антизапрет']);
+      expect(pac).to.include('FindProxyForURL');
+    });
+
+    it('rejects a built-in provider redirect to an unrelated host', async () => {
+      httpLib.get = async (_url, options) => {
+        const validation = options.validateFinalUrl('https://evil.example/proxy.pac');
+        throw new Error(validation.error);
+      };
+
+      let error;
+      try {
+        await pacSync.downloadPacFromProvider(PAC_PROVIDERS['Антизапрет']);
+      } catch (err) {
+        error = err;
+      }
+      expect(error).to.be.an('error');
+      expect(error.wrapped).to.be.an('error');
+      expect(error.wrapped.message).to.include('недоверенный хост');
     });
   });
 });
