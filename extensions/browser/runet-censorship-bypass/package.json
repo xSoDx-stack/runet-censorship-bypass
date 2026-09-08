@@ -1,0 +1,57 @@
+{
+  "name": "anticheburnet",
+  "version": "2.2.28",
+  "description": "АнтиЧебурнет — PAC-расширение Manifest V3 для Chromium и Firefox",
+  "scripts": {
+    "version:check": "node ../../../scripts/sync-version.mjs --check",
+    "prelint": "npm run version:check",
+    "prelint:firefox": "npm run release:firefox",
+    "pretest": "npm run version:check",
+    "prerelease": "npm run version:check",
+    "prerelease:chrome": "npm run version:check",
+    "prerelease:firefox": "npm run version:check",
+    "prerelease:all": "npm run version:check",
+    "lint": "eslint ./src/**/*.js ./test/**/*.js --ignore-pattern vendor",
+    "audit:ci": "node scripts/audit-dependencies.mjs",
+    "lint:firefox": "web-ext lint --source-dir build/extension-firefox",
+    "gulp": "gulp",
+    "test": "mocha --recursive test/**/*.test.js",
+    "test:browser:chrome": "node test/browser/chrome-smoke.js",
+    "prestart:firefox": "npm run release:firefox",
+    "start:firefox": "web-ext run --source-dir build/extension-firefox",
+    "prepackage:firefox": "npm run release:firefox",
+    "package:firefox": "web-ext build --source-dir build/extension-firefox --artifacts-dir web-ext-artifacts --overwrite-dest",
+    "presign:firefox": "npm run release:firefox",
+    "sign:firefox": "web-ext sign --source-dir build/extension-firefox --artifacts-dir web-ext-signed-artifacts --channel unlisted --approval-timeout 900000 --no-input",
+    "start": "npm run release",
+    "release": "gulp buildAll",
+    "release:chrome": "gulp buildChrome",
+    "release:firefox": "gulp buildFirefox",
+    "release:all": "gulp buildTargets"
+  },
+  "engines": {
+    "node": ">=22.0.0",
+    "npm": ">=9.0.0"
+  },
+  "author": "anticensority+owners@googlegroups.com",
+  "license": "GPL-3.0-or-later",
+  "overrides": {
+    "serialize-javascript": "^7.0.5"
+  },
+  "devDependencies": {
+    "acorn": "^8.18.0",
+    "chai": "^4.5.0",
+    "del": "^6.1.1",
+    "eslint": "^8.57.1",
+    "eslint-config-google": "^0.14.0",
+    "gulp": "^5.0.1",
+    "gulp-changed": "^4.0.3",
+    "mocha": "^10.8.2",
+    "plugin-error": "^1.0.1",
+    "puppeteer-core": "25.8.0",
+    "sinon-chrome": "^3.0.1",
+    "through2": "^4.0.2",
+    "tldts": "^7.4.11",
+    "web-ext": "10.6.0"
+  }
+}

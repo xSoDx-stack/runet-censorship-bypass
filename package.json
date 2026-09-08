@@ -1,7 +1,7 @@
 {
   "name": "anticheburnet",
-  "version": "2.2.27",
-  "description": "АнтиЧебурнет - расширение для обхода интернет-цензуры на базе PAC-скриптов (Manifest V3)",
+  "version": "2.2.28",
+  "description": "АнтиЧебурнет — PAC-расширение Manifest V3 для Chromium и Firefox",
   "scripts": {
     "version:sync": "node scripts/sync-version.mjs",
     "version:check": "node scripts/sync-version.mjs --check",
@@ -10,12 +10,21 @@
     "prebuild": "npm run version:check",
     "prelint": "npm run version:check",
     "pretest": "npm run version:check",
-    "build": "npm --prefix extensions/chromium/runet-censorship-bypass run release",
-    "lint": "npm --prefix extensions/chromium/runet-censorship-bypass run lint",
-    "test": "npm --prefix extensions/chromium/runet-censorship-bypass run test"
+    "build": "npm --prefix extensions/browser/runet-censorship-bypass run release",
+    "build:chrome": "npm --prefix extensions/browser/runet-censorship-bypass run release:chrome",
+    "build:firefox": "npm --prefix extensions/browser/runet-censorship-bypass run release:firefox",
+    "build:all": "npm --prefix extensions/browser/runet-censorship-bypass run release:all",
+    "lint": "npm --prefix extensions/browser/runet-censorship-bypass run lint",
+    "lint:firefox": "npm --prefix extensions/browser/runet-censorship-bypass run lint:firefox",
+    "audit:ci": "npm --prefix extensions/browser/runet-censorship-bypass run audit:ci",
+    "test": "npm --prefix extensions/browser/runet-censorship-bypass run test",
+    "test:browser:chrome": "npm --prefix extensions/browser/runet-censorship-bypass run test:browser:chrome",
+    "start:firefox": "npm --prefix extensions/browser/runet-censorship-bypass run start:firefox",
+    "package:firefox": "npm --prefix extensions/browser/runet-censorship-bypass run package:firefox",
+    "sign:firefox": "npm --prefix extensions/browser/runet-censorship-bypass run sign:firefox"
   },
   "engines": {
-    "node": ">=20.0.0",
+    "node": ">=22.0.0",
     "npm": ">=9.0.0"
   },
   "author": "anticensority+owners@googlegroups.com",

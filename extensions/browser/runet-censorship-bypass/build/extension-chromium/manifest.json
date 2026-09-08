@@ -1,0 +1,58 @@
+{
+  "manifest_version": 3,
+  "name": "__MSG_extName__",
+  "default_locale": "ru",
+  "description": "__MSG_extDesc__",
+  "version": "2.2.28",
+  "icons": {
+    "16": "icons/default-16.png",
+    "32": "icons/default-32.png",
+    "48": "icons/default-48.png",
+    "128": "icons/default-128.png"
+  },
+  "author": "anticensority+owners@googlegroups.com",
+  "permissions": [
+    "proxy",
+    "alarms",
+    "storage",
+    "unlimitedStorage",
+    "tabs",
+    "contextMenus",
+    "notifications",
+    "webRequest",
+    "webRequestAuthProvider"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://blocklist.rkn.gov.ru/*"
+      ],
+      "js": [
+        "content-scripts/rkn-search-prefill.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "minimum_chrome_version": "102.0.0.0",
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "АнтиЧебурнет",
+    "default_popup": "/pages/options/index.html",
+    "default_icon": {
+      "16": "icons/default-16.png",
+      "32": "icons/default-32.png",
+      "48": "icons/default-48.png",
+      "128": "icons/default-128.png"
+    }
+  },
+  "options_ui": {
+    "page": "/pages/options/index.html",
+    "open_in_tab": true
+  }
+}

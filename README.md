@@ -1,13 +1,19 @@
-# <img src="extensions/chromium/runet-censorship-bypass/src/extension-common/icons/default-128.png" width="44" height="44" alt="Логотип АнтиЧебурнет"> АнтиЧебурнет
+# <img src="extensions/browser/runet-censorship-bypass/src/extension-common/icons/default-128.png" width="44" height="44" alt="Логотип АнтиЧебурнет"> АнтиЧебурнет
 
-[![Version](https://img.shields.io/badge/version-2.2.27-blue.svg?style=flat-square)](./package.json)
+[![Version](https://img.shields.io/badge/version-2.2.28-blue.svg?style=flat-square)](./package.json)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-green.svg?style=flat-square)](./LICENSE)
-[![Manifest V3](https://img.shields.io/badge/Platform-Chromium%20MV3-orange.svg?style=flat-square)](https://developer.chrome.com/docs/extensions/mv3/intro/)
+[![Browsers](https://img.shields.io/badge/Browsers-Chromium%20%7C%20Firefox-orange.svg?style=flat-square)](#поддерживаемые-браузеры)
 [![Telemetry: None](https://img.shields.io/badge/Telemetry-None-success.svg?style=flat-square)](#приватность-и-сетевые-обращения)
 
-**АнтиЧебурнет** — расширение Manifest V3 для браузеров на базе Chromium. Оно устанавливает PAC-скрипт в настройки браузера и по его правилам направляет отдельные сайты напрямую (`DIRECT`) или через прокси.
+**АнтиЧебурнет** — кроссбраузерное расширение Manifest V3 для Chromium и Firefox. Оно устанавливает PAC-скрипт в настройки браузера и по его правилам направляет отдельные сайты напрямую (`DIRECT`) или через прокси.
 
-Расширение предназначено для Google Chrome, Microsoft Edge, Brave, Яндекс.Браузера, Opera и Vivaldi. Фактическая совместимость зависит от версии и политики конкретного браузера; минимальная поддерживаемая версия Chromium — 102.
+## Поддерживаемые браузеры
+
+- **Chromium 102+**: Google Chrome, Microsoft Edge, Brave, Яндекс.Браузер, Opera и Vivaldi;
+- **Firefox Desktop 140+**;
+- **Firefox for Android 142+** заявлен в манифесте и требует дополнительной проверки на конкретном устройстве.
+
+Фактическая совместимость может зависеть от версии, платформы и политики браузера. В Firefox пользователь должен отдельно разрешить расширению работу в приватных окнах: Firefox требует этот доступ для изменения общих настроек прокси, даже если приватные окна не используются.
 
 > **Важно:** это не VPN. Расширение управляет только трафиком браузера, не влияет на другие приложения и не гарантирует доступность каждого сайта, анонимность или сокрытие IP для соединений, которые PAC оставляет прямыми.
 
@@ -18,7 +24,7 @@
 - Загружать готовый пользовательский PAC по прямой ссылке.
 - Для выбранного домена принудительно включать прокси, прямое подключение или снова передавать решение PAC.
 - Подключать прокси HTTP, HTTPS, SOCKS4 и SOCKS5, в том числе локальные Tor и WARP.
-- Проверять доступность пользовательских прокси и поддерживать прокси с логином и паролем.
+- Проверять доступность пользовательских прокси и поддерживать HTTP/HTTPS-прокси с логином и паролем.
 - Импортировать и экспортировать списки доменов в формате `.txt`.
 - Открывать официальный сервис проверки блокировок Роскомнадзора с адресом текущей страницы, уже подставленным в форму; CAPTCHA и отправка запроса остаются ручными.
 - Показывать локальный журнал ошибок PAC, прокси и авторизации с копированием отдельных записей и экспортом журнала.
@@ -28,7 +34,7 @@
 
 ## Быстрый старт
 
-1. Установите расширение и откройте его окно с панели браузера.
+1. Установите расширение и откройте его окно с панели браузера. В Firefox также разрешите ему работу в приватных окнах.
 2. На вкладке **PAC** выберите источник. Для первого запуска обычно достаточно «Антизапрета» или «Антицензорити» — добавлять собственный прокси для них не обязательно.
 3. Дождитесь сообщения об успешном применении PAC.
 4. Если отдельный сайт открывается неправильно, перейдите на вкладку **Сайты** и выберите для него:
@@ -77,7 +83,7 @@
 
 ## Приватность и сетевые обращения
 
-В проекте нет аналитических SDK, рекламных счётчиков или отправки истории посещений разработчику. Настройки, правила, сведения о прокси и диагностический журнал хранятся локально в `chrome.storage.local`.
+В проекте нет аналитических SDK, рекламных счётчиков или отправки истории посещений разработчику. Настройки, правила, сведения о прокси и диагностический журнал хранятся локально в хранилище расширения (`storage.local`).
 
 При этом расширение не работает полностью офлайн и выполняет необходимые сетевые обращения:
 
@@ -102,47 +108,76 @@
 | `notifications` | Включаемые пользователем уведомления о сбоях |
 | `<all_urls>` | Загрузка PAC по выбранному адресу, применение правил ко всем сайтам и проверка сетевых ответов |
 
-Доступ `webNavigation` не запрашивается. Разрешение на работу в приватных окнах пользователь включает отдельно в настройках браузера.
+Доступ `webNavigation` не запрашивается. В Firefox разрешение на работу в приватных окнах включается пользователем отдельно и необходимо для управления общими настройками прокси.
 
 ## Установка из исходного кода
 
 ### Требования
 
-- Node.js 20 или новее;
+- Node.js 22 или новее;
 - npm 9 или новее;
-- браузер на базе Chromium 102 или новее.
+- Chromium 102 или новее либо Firefox Desktop 140 или новее.
 
 ### Сборка
 
 ```bash
 git clone https://github.com/xSoDx-stack/runet-censorship-bypass.git
 cd runet-censorship-bypass
-npm install --prefix extensions/chromium/runet-censorship-bypass
-npm run build
+npm install --prefix extensions/browser/runet-censorship-bypass
+npm run build:all
 ```
 
-Готовое распакованное расширение появится в каталоге:
+Готовые распакованные сборки появятся в каталогах:
 
 ```text
-extensions/chromium/runet-censorship-bypass/build/extension-full
+extensions/browser/runet-censorship-bypass/build/extension-chromium  # Chromium
+extensions/browser/runet-censorship-bypass/build/extension-firefox   # Firefox
 ```
 
-### Установка в браузер
+Общий проект расширения находится в нейтральном каталоге `extensions/browser`; платформенные различия накладываются во время сборки. Команда `npm run build` остаётся Chromium-only для обратной совместимости.
+
+### Установка в Chromium
 
 1. Откройте `chrome://extensions/` или соответствующую страницу расширений вашего браузера.
 2. Включите **Режим разработчика**.
 3. Нажмите **Загрузить распакованное расширение**.
-4. Выберите каталог `build/extension-full`, указанный выше.
+4. Выберите каталог `build/extension-chromium`, указанный выше.
 5. После следующей сборки нажимайте **Обновить** на карточке расширения, чтобы браузер загрузил изменения.
+
+### Установка в Firefox
+
+1. Откройте `about:debugging#/runtime/this-firefox`.
+2. Нажмите **Загрузить временное дополнение**.
+3. Выберите `manifest.json` в каталоге `build/extension-firefox`.
+4. Откройте карточку дополнения в `about:addons` и разрешите **Работу в приватных окнах**.
+5. После следующей сборки нажмите **Перезагрузить** на странице `about:debugging`.
+
+Для запуска в отдельном тестовом профиле можно использовать `npm run start:firefox`. Упакованный ZIP создаётся командой `npm run package:firefox` в каталоге `web-ext-artifacts`. Этот ZIP предназначен для проверки и отправки на подпись: обычные Firefox Release и Beta устанавливают только дополнения, подписанные Mozilla.
+
+### Подписание Firefox-релиза
+
+GitHub Actions отправляет Firefox-сборку в AMO по каналу `unlisted`, получает подписанный файл `anticheburnet-v<version>-firefox-mv3.xpi` и прикладывает его к GitHub Release. Подписание выполняется для push в `development`, тегов `v*` и ручного запуска workflow; в pull request секреты AMO не используются.
+
+Для workflow должны быть настроены Repository secrets `AMO_JWT_ISSUER` и `AMO_JWT_SECRET`. Это выданные AMO API-реквизиты для получения сертификата Mozilla; сам секрет или файл закрытого ключа в Git хранить не нужно. Каждая отправляемая в AMO сборка должна иметь новую версию.
+
+Тот же путь можно проверить локально командой `npm run sign:firefox`, предварительно задав переменные окружения `WEB_EXT_API_KEY` и `WEB_EXT_API_SECRET`. Команда отправляет сборку в AMO и сохраняет подписанный XPI в `web-ext-signed-artifacts`.
 
 ## Команды разработчика
 
 ```bash
-npm run build          # проверить версию и собрать build/extension-full
-npm run lint           # запустить ESLint
-npm test               # запустить тесты
-npm run version:check  # проверить синхронность версии во всех файлах
-npm run bump:patch     # увеличить patch-версию и синхронизировать файлы
+npm run build                # собрать Chromium (обратная совместимость)
+npm run build:chrome         # собрать build/extension-chromium
+npm run build:firefox        # собрать build/extension-firefox
+npm run build:all            # собрать обе версии
+npm run lint                 # запустить ESLint
+npm run lint:firefox         # проверить Firefox-сборку через web-ext
+npm test                     # запустить модульные тесты
+npm run test:browser:chrome  # запустить браузерный smoke-тест Chrome
+npm run start:firefox        # собрать и запустить Firefox в тестовом профиле
+npm run package:firefox      # собрать Firefox ZIP
+npm run sign:firefox         # получить подписанный Mozilla Firefox XPI
+npm run version:check        # проверить синхронность версии во всех файлах
+npm run bump:patch           # увеличить patch-версию и синхронизировать файлы
 ```
 
 Единственный источник версии проекта — поле `version` в корневом `package.json`. Если оно было изменено вручную, выполните `npm run version:sync`. Проверка синхронности также автоматически запускается перед сборкой, тестами и линтингом.

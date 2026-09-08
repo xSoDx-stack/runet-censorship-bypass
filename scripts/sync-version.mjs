@@ -39,7 +39,7 @@ if (!/^\d+\.\d+\.\d+(?:\.\d+)?$/.test(canonical)) {
 }
 
 const changed = [];
-const nestedRoot = 'extensions/chromium/runet-censorship-bypass';
+const nestedRoot = 'extensions/browser/runet-censorship-bypass';
 
 if (updateJson(`${nestedRoot}/package.json`, (pkg) => { pkg.version = canonical; })) {
   changed.push(`${nestedRoot}/package.json`);
@@ -56,10 +56,20 @@ if (updateJson(`${nestedRoot}/src/extension-common/manifest.json`, (manifest) =>
 })) {
   changed.push(`${nestedRoot}/src/extension-common/manifest.json`);
 }
-if (updateJson(`${nestedRoot}/build/extension-full/manifest.json`, (manifest) => {
+if (updateJson(`${nestedRoot}/src/extension-firefox/manifest.json`, (manifest) => {
   manifest.version = canonical;
 })) {
-  changed.push(`${nestedRoot}/build/extension-full/manifest.json`);
+  changed.push(`${nestedRoot}/src/extension-firefox/manifest.json`);
+}
+if (updateJson(`${nestedRoot}/build/extension-chromium/manifest.json`, (manifest) => {
+  manifest.version = canonical;
+})) {
+  changed.push(`${nestedRoot}/build/extension-chromium/manifest.json`);
+}
+if (updateJson(`${nestedRoot}/build/extension-firefox/manifest.json`, (manifest) => {
+  manifest.version = canonical;
+})) {
+  changed.push(`${nestedRoot}/build/extension-firefox/manifest.json`);
 }
 
 const readmePath = 'README.md';

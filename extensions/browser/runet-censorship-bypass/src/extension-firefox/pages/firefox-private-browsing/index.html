@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Разрешение приватных окон</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <h1>Разрешите работу в приватных окнах</h1>
+    <p>
+      Firefox применяет PAC ко всему профилю, поэтому без этого разрешения
+      АнтиЧебурнет не может безопасно изменить настройки прокси.
+    </p>
+    <ol>
+      <li>В карточке расширения выше откройте вкладку <strong>«Подробности»</strong>.</li>
+      <li>Найдите пункт <strong>«Работа в приватных окнах»</strong>.</li>
+      <li>Выберите <strong>«Разрешить»</strong>.</li>
+    </ol>
+    <p id="permissionStatus" class="status">Проверяем текущее разрешение…</p>
+    <p class="hint">
+      После выдачи разрешения снова откройте АнтиЧебурнет и примените PAC-скрипт.
+    </p>
+    <button id="openExtensionSettings" type="button">Открыть АнтиЧебурнет</button>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

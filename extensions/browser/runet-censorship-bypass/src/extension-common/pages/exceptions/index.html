@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>АнтиЧебурнет — Управление списками сайтов</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="page-header">
+      <div class="header-brand">
+        <img src="../../icons/default-128.png" alt="Logo" class="logo">
+        <div>
+          <h1>Управление списками сайтов</h1>
+          <p class="subtitle">Исключения, белый список и правила маршрутизации PAC</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <input type="file" id="fileImportInput" accept=".txt,text/plain" style="display: none;">
+        <button class="btn btn-secondary" id="importFileBtn" title="Загрузить домены из текстового файла (.txt, один домен на строку)">📁 Загрузить .txt</button>
+        <button class="btn btn-secondary" id="exportFileBtn" title="Экспортировать текущий список сайтов в файл .txt">💾 Экспорт .txt</button>
+        <button class="btn btn-secondary" id="modeToggleBtn">📝 Текстовый режим</button>
+        <button class="btn btn-primary" id="saveAllBtn">💾 Сохранить</button>
+      </div>
+    </header>
+
+    <!-- Visual List View -->
+    <main id="listViewSection" class="content-section">
+      <!-- Tabs -->
+      <nav class="sub-nav-tabs">
+        <button class="tab-btn active" data-subtab="included">
+          🟢 Проксировать (<span id="includedCount">0</span>)
+        </button>
+        <button class="tab-btn" data-subtab="excluded">
+          ⚪ Не проксировать (<span id="excludedCount">0</span>)
+        </button>
+        <button class="tab-btn" data-subtab="whitelist">
+          🛡️ Белый список (<span id="whitelistCount">0</span>)
+        </button>
+      </nav>
+
+      <!-- Search & Add Bar -->
+      <div class="toolbar">
+        <div class="add-box">
+          <input type="text" class="input-field" id="newDomainInput" placeholder="Добавить домен (напр. rutracker.org или *.domain.com)">
+          <button class="btn btn-primary" id="addDomainBtn">+ Добавить</button>
+        </div>
+        <input type="text" class="search-field" id="searchDomainInput" placeholder="🔍 Поиск по списку...">
+        <button class="btn btn-danger" id="clearListBtn" title="Очистить список доменов текущей вкладки">🗑️ Очистить список</button>
+      </div>
+
+      <!-- Domain Items List -->
+      <div class="domain-list-container" id="domainListContainer">
+        <!-- Dynamically rendered -->
+      </div>
+    </main>
+
+    <!-- Raw Text Editor View -->
+    <main id="editorViewSection" class="content-section" style="display: none;">
+      <div class="editor-help-card">
+        <strong>Формат текстового редактора:</strong><br>
+        Список проксируемых сайтов &rarr; разделитель <code>===</code> &rarr; список исключений &rarr; разделитель <code>===</code> &rarr; белый список.
+      </div>
+      <textarea class="raw-editor" id="rawTextEditor" spellcheck="false"></textarea>
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px;">
+        <span id="editorStatusText" style="font-size: 13px; color: var(--text-muted);"></span>
+        <button class="btn btn-primary" id="saveRawBtn">💾 Применить и сохранить</button>
+      </div>
+    </main>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast"></div>
+  </div>
+
+  <script type="module" src="index.js"></script>
+</body>
+</html>
