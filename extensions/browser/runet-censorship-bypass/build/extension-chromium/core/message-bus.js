@@ -2,7 +2,12 @@
 
 import { appState } from './app-state.js';
 import { pacSync, PAC_PROVIDERS } from './pac-sync.js';
-import { pacKitchen, getDefaultConfigs, matchExceptionDomain } from './pac-kitchen.js';
+import {
+  pacKitchen,
+  calculateExceptionStats,
+  getDefaultConfigs,
+  matchExceptionDomain,
+} from './pac-kitchen.js';
 import { errorHandlers } from './error-handlers.js';
 import { storage } from './storage.js';
 import { httpLib } from './http-lib.js';
@@ -152,7 +157,13 @@ export function setupMessageBus() {
           for (const k in configs) {
             defaultConfigs[k] = configs[k].dflt;
           }
-          const exceptionStats = pacKitchen.getCachedStats();
+          // Derive the counters from the same rules snapshot returned below.
+          // This prevents a long-lived Firefox popup from observing a stale
+          // statistics cache after the standalone editor changes the lists.
+          const exceptionStats = calculateExceptionStats(
+            pacMods.exceptions,
+            pacMods.whitelist,
+          );
 
           let currentSiteMatch = null;
           let currentSiteRoute = null;

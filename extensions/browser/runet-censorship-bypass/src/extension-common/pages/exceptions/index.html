@@ -22,7 +22,7 @@
         <button class="btn btn-secondary" id="importFileBtn" title="Загрузить домены из текстового файла (.txt, один домен на строку)">📁 Загрузить .txt</button>
         <button class="btn btn-secondary" id="exportFileBtn" title="Экспортировать текущий список сайтов в файл .txt">💾 Экспорт .txt</button>
         <button class="btn btn-secondary" id="modeToggleBtn">📝 Текстовый режим</button>
-        <button class="btn btn-primary" id="saveAllBtn">💾 Сохранить</button>
+        <span class="autosave-status saved" id="saveStatusText" role="status" aria-live="polite">✓ Автосохранение</span>
       </div>
     </header>
 
@@ -64,9 +64,8 @@
         Список проксируемых сайтов &rarr; разделитель <code>===</code> &rarr; список исключений &rarr; разделитель <code>===</code> &rarr; белый список.
       </div>
       <textarea class="raw-editor" id="rawTextEditor" spellcheck="false"></textarea>
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px;">
-        <span id="editorStatusText" style="font-size: 13px; color: var(--text-muted);"></span>
-        <button class="btn btn-primary" id="saveRawBtn">💾 Применить и сохранить</button>
+      <div class="editor-status-row">
+        <span id="editorStatusText">Изменения сохраняются автоматически</span>
       </div>
     </main>
 

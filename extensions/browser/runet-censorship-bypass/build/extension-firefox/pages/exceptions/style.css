@@ -93,7 +93,40 @@ h1 {
 
 .header-actions {
   display: flex;
+  align-items: center;
   gap: 10px;
+}
+
+.autosave-status {
+  min-width: 124px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.autosave-status.saving {
+  color: var(--warning);
+  border-color: rgba(245, 158, 11, 0.35);
+}
+
+.autosave-status.saved {
+  color: var(--success);
+  border-color: rgba(16, 185, 129, 0.35);
+}
+
+.autosave-status.error {
+  color: var(--danger);
+  border-color: rgba(239, 68, 68, 0.35);
+}
+
+#importFileBtn.import-requested {
+  color: var(--text-primary);
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.22);
 }
 
 /* Tabs */
@@ -303,6 +336,16 @@ h1 {
 
 .raw-editor:focus {
   border-color: var(--border-focus);
+}
+
+.editor-status-row {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  min-height: 24px;
+  margin-top: 10px;
+  color: var(--text-muted);
+  font-size: 13px;
 }
 
 /* Toast */

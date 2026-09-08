@@ -13,6 +13,7 @@ import { FIREFOX_PRIVATE_BROWSING_REQUIRED_ERROR_CODE } from '../../core/errors-
 // Single source of truth for fallback version placeholder
 const DEFAULT_VERSION = '';
 const PROXY_HEALTH_FRESH_MS = 15 * 60 * 1000;
+const PAC_MODS_STORAGE_KEY = 'pac-kitchen-mods';
 
 // State
 let appState = {
@@ -43,6 +44,8 @@ let appState = {
     stats: {},
   },
 };
+let stateLoadRevision = 0;
+let externalStateRefreshTimer = null;
 
 function formatVersion(ver) {
   if (!ver) return DEFAULT_VERSION ? `v${DEFAULT_VERSION}` : '';
@@ -171,6 +174,23 @@ function sendMessage(message) {
         resolve(res || { success: false });
       }
     });
+  });
+}
+
+function isFirefoxRuntime() {
+  try {
+    return chrome.runtime.getURL('').startsWith('moz-extension://');
+  } catch {
+    return false;
+  }
+}
+
+function openStandaloneDomainImport() {
+  const url = chrome.runtime.getURL('pages/exceptions/index.html?import=1&target=included');
+  chrome.tabs.create({ url }, () => {
+    if (chrome.runtime.lastError) {
+      showToast(`Ошибка открытия импорта: ${chrome.runtime.lastError.message}`);
+    }
   });
 }
 
@@ -1521,13 +1541,15 @@ async function handleClearLogs() {
 }
 
 // Init State from background (Ultra-lightweight and fast)
-async function loadState(currentDomain = '', currentTabId = null) {
+async function loadState(currentDomain = '', currentTabId = null, { preloadLogs = true } = {}) {
+  const loadRevision = ++stateLoadRevision;
   const res = await sendMessage({
     action: 'GET_STATE',
     currentDomain,
     currentTabId,
     includeExceptions: false,
   });
+  if (loadRevision !== stateLoadRevision) return;
   if (res.success && res.data) {
     appState.syncState = res.data.syncState || appState.syncState;
     appState.pacMods = res.data.pacMods || appState.pacMods;
@@ -1537,15 +1559,59 @@ async function loadState(currentDomain = '', currentTabId = null) {
     appState.version = formatVersion(res.data.version || (typeof chrome !== 'undefined' && chrome.runtime?.getManifest?.()?.version) || DEFAULT_VERSION);
     appState.exceptionStats = res.data.exceptionStats || appState.exceptionStats;
     appState.proxyHealthMap = res.data.proxyHealthMap || {};
-    if (res.data.currentSiteMatch) {
-      appState.currentSiteMatch = res.data.currentSiteMatch;
-    }
+    appState.currentSiteMatch = res.data.currentSiteMatch || { matched: false };
     appState.currentSiteRoute = res.data.currentSiteRoute || null;
     render();
   }
 
   // Preload log stats for navigation badge
-  loadLogs().catch(() => { });
+  if (preloadLogs) loadLogs().catch(() => { });
+}
+
+async function refreshStateFromActiveTab({ preloadLogs = false } = {}) {
+  let domain = '';
+  let currentTabId = null;
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab && tab.url) {
+      const domainInfo = extractValidWebDomain(tab.url);
+      if (domainInfo) {
+        domain = domainInfo.rootDomain || domainInfo.fullHost;
+        currentTabId = Number.isInteger(tab.id) ? tab.id : null;
+      }
+    }
+  } catch { }
+
+  appState.currentSiteDomain = domain;
+  appState.currentSiteTabId = currentTabId;
+  await loadState(domain, currentTabId, { preloadLogs });
+  prefillQuickAddInput();
+}
+
+function scheduleExternalStateRefresh() {
+  if (externalStateRefreshTimer !== null) {
+    clearTimeout(externalStateRefreshTimer);
+  }
+  externalStateRefreshTimer = setTimeout(() => {
+    externalStateRefreshTimer = null;
+    refreshStateFromActiveTab().catch(() => { });
+  }, 50);
+}
+
+function setupExternalStateRefresh() {
+  if (chrome.storage?.onChanged) {
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName === 'local' &&
+          Object.prototype.hasOwnProperty.call(changes || {}, PAC_MODS_STORAGE_KEY)) {
+        scheduleExternalStateRefresh();
+      }
+    });
+  }
+
+  window.addEventListener('focus', scheduleExternalStateRefresh);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') scheduleExternalStateRefresh();
+  });
 }
 
 // Event Listeners
@@ -1615,7 +1681,16 @@ function setupEvents() {
 
   // Sites Tab: File Import (.txt)
   if (el.importTxtBtn && el.importTxtFileInput) {
-    el.importTxtBtn.addEventListener('click', () => el.importTxtFileInput.click());
+    el.importTxtBtn.addEventListener('click', () => {
+      // Firefox destroys a toolbar popup when the native file picker opens,
+      // so its change event can never be processed by this document. Continue
+      // the operation in a persistent extension tab instead.
+      if (isFirefoxRuntime()) {
+        openStandaloneDomainImport();
+        return;
+      }
+      el.importTxtFileInput.click();
+    });
     el.importTxtFileInput.addEventListener('change', handleOptionsFileImport);
   }
 
@@ -2132,25 +2207,8 @@ async function initApp() {
   initElements();
   setupEvents();
   render(); // Instant 0ms UI render before async network/storage calls
-
-  let domain = '';
-  let currentTabId = null;
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab && tab.url) {
-      const domainInfo = extractValidWebDomain(tab.url);
-      if (domainInfo) {
-        domain = domainInfo.rootDomain || domainInfo.fullHost;
-        appState.currentSiteDomain = domain;
-        currentTabId = Number.isInteger(tab.id) ? tab.id : null;
-        appState.currentSiteTabId = currentTabId;
-      }
-    }
-  } catch { }
-
-  prefillQuickAddInput();
-  await loadState(domain, currentTabId);
-  prefillQuickAddInput();
+  await refreshStateFromActiveTab({ preloadLogs: true });
+  setupExternalStateRefresh();
 }
 
 if (document.readyState === 'loading') {

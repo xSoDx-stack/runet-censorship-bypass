@@ -1,6 +1,6 @@
 {
   "name": "anticheburnet",
-  "version": "2.2.28",
+  "version": "2.2.29",
   "description": "АнтиЧебурнет — PAC-расширение Manifest V3 для Chromium и Firefox",
   "scripts": {
     "version:check": "node ../../../scripts/sync-version.mjs --check",

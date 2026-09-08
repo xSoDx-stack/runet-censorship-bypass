@@ -1,6 +1,6 @@
 # <img src="extensions/browser/runet-censorship-bypass/src/extension-common/icons/default-128.png" width="44" height="44" alt="Логотип АнтиЧебурнет"> АнтиЧебурнет
 
-[![Version](https://img.shields.io/badge/version-2.2.28-blue.svg?style=flat-square)](./package.json)
+[![Version](https://img.shields.io/badge/version-2.2.29-blue.svg?style=flat-square)](./package.json)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-green.svg?style=flat-square)](./LICENSE)
 [![Browsers](https://img.shields.io/badge/Browsers-Chromium%20%7C%20Firefox-orange.svg?style=flat-square)](#поддерживаемые-браузеры)
 [![Telemetry: None](https://img.shields.io/badge/Telemetry-None-success.svg?style=flat-square)](#приватность-и-сетевые-обращения)

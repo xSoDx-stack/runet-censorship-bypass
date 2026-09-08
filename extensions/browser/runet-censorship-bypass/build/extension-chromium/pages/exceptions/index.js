@@ -13,6 +13,11 @@ let state = {
   rawMode: false,
 };
 let saveQueue = Promise.resolve();
+let saveRevision = 0;
+let rawAutosaveTimer = null;
+let rawEditRevision = 0;
+let rawEditorDirty = false;
+const RAW_AUTOSAVE_DELAY_MS = 600;
 
 const el = {
   listViewSection: document.getElementById('listViewSection'),
@@ -21,7 +26,7 @@ const el = {
   exportFileBtn: document.getElementById('exportFileBtn'),
   fileImportInput: document.getElementById('fileImportInput'),
   modeToggleBtn: document.getElementById('modeToggleBtn'),
-  saveAllBtn: document.getElementById('saveAllBtn'),
+  saveStatusText: document.getElementById('saveStatusText'),
   tabBtns: document.querySelectorAll('.tab-btn'),
   includedCount: document.getElementById('includedCount'),
   excludedCount: document.getElementById('excludedCount'),
@@ -32,7 +37,6 @@ const el = {
   clearListBtn: document.getElementById('clearListBtn'),
   domainListContainer: document.getElementById('domainListContainer'),
   rawTextEditor: document.getElementById('rawTextEditor'),
-  saveRawBtn: document.getElementById('saveRawBtn'),
   editorStatusText: document.getElementById('editorStatusText'),
   toast: document.getElementById('toast'),
 };
@@ -44,6 +48,12 @@ function showToast(text, duration = 3000) {
   setTimeout(() => {
     el.toast.classList.remove('show');
   }, duration);
+}
+
+function setSaveStatus(kind, text) {
+  if (!el.saveStatusText) return;
+  el.saveStatusText.className = `autosave-status ${kind}`;
+  el.saveStatusText.textContent = text;
 }
 
 function sendMessage(msg) {
@@ -66,6 +76,7 @@ async function loadData() {
     state.whitelist = [...(mods.whitelist || [])];
     render();
   } else {
+    setSaveStatus('error', '⚠ Ошибка загрузки');
     showToast('Ошибка загрузки данных');
   }
 }
@@ -77,13 +88,20 @@ function saveAllData() {
     exceptions: Object.assign({}, state.exceptions),
     whitelist: [...state.whitelist],
   };
+  const revision = ++saveRevision;
+  setSaveStatus('saving', '⏳ Сохранение…');
 
   const save = async () => {
     const res = await sendMessage({ action: 'SAVE_MODS', mods });
     if (res && res.success) {
-      showToast('✓ Все изменения успешно сохранены!');
+      if (revision === saveRevision) {
+        setSaveStatus('saved', '✓ Сохранено');
+      }
       render();
       return true;
+    }
+    if (revision === saveRevision) {
+      setSaveStatus('error', '⚠ Ошибка');
     }
     showToast(`Ошибка сохранения: ${(res && res.error) || 'Сбой'}`);
     return false;
@@ -424,9 +442,9 @@ function handleFileExport() {
   showToast(`✓ Экспортировано ${domains.length} доменов в файл ${fileName}!`);
 }
 
-function toggleMode() {
-  state.rawMode = !state.rawMode;
-  if (state.rawMode) {
+async function toggleMode() {
+  if (!state.rawMode) {
+    state.rawMode = true;
     // Fill text editor
     const incList = Object.keys(state.exceptions).filter((k) => state.exceptions[k] === true);
     const excList = Object.keys(state.exceptions).filter((k) => state.exceptions[k] === false);
@@ -436,7 +454,16 @@ function toggleMode() {
     el.listViewSection.style.display = 'none';
     el.editorViewSection.style.display = 'block';
     el.modeToggleBtn.textContent = '📋 Список';
+    rawEditorDirty = false;
+    if (el.editorStatusText) {
+      el.editorStatusText.textContent = 'Изменения сохраняются автоматически';
+    }
   } else {
+    if (rawEditorDirty) {
+      const wasSaved = await saveRawText(rawEditRevision);
+      if (!wasSaved) return;
+    }
+    state.rawMode = false;
     el.editorViewSection.style.display = 'none';
     el.listViewSection.style.display = 'block';
     el.modeToggleBtn.textContent = '📝 Текстовый режим';
@@ -444,7 +471,11 @@ function toggleMode() {
   }
 }
 
-async function saveRawText() {
+async function saveRawText(editRevision = rawEditRevision) {
+  if (rawAutosaveTimer !== null) {
+    clearTimeout(rawAutosaveTimer);
+    rawAutosaveTimer = null;
+  }
   const text = el.rawTextEditor.value;
   const sections = text
     .trim()
@@ -465,12 +496,45 @@ async function saveRawText() {
   state.exceptions = newExceptions;
   state.whitelist = whiteRes.validDomains;
 
+  if (el.editorStatusText) el.editorStatusText.textContent = '⏳ Сохранение…';
   const wasSaved = await saveAllData();
   if (!wasSaved) return;
-  toggleMode();
 
   const skipMsg = totalSkipped > 0 ? ` (пропущено некорректных строк: ${totalSkipped})` : '';
-  showToast(`✓ Настройки сохранены!${skipMsg}`, 3500);
+  if (editRevision === rawEditRevision) {
+    rawEditorDirty = false;
+    if (el.editorStatusText) {
+      el.editorStatusText.textContent = `✓ Сохранено автоматически${skipMsg}`;
+    }
+  }
+  return true;
+}
+
+function scheduleRawTextAutosave() {
+  rawEditRevision += 1;
+  rawEditorDirty = true;
+  if (rawAutosaveTimer !== null) clearTimeout(rawAutosaveTimer);
+  if (el.editorStatusText) {
+    el.editorStatusText.textContent = 'Изменения будут сохранены автоматически…';
+  }
+  const editRevision = rawEditRevision;
+  rawAutosaveTimer = setTimeout(() => {
+    rawAutosaveTimer = null;
+    saveRawText(editRevision);
+  }, RAW_AUTOSAVE_DELAY_MS);
+}
+
+function showRequestedImport() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('import') !== '1' || !el.importFileBtn) return;
+  const requestedTarget = params.get('target');
+  if (['included', 'excluded', 'whitelist'].includes(requestedTarget)) {
+    state.activeSubTab = requestedTarget;
+    render();
+  }
+  el.importFileBtn.classList.add('import-requested');
+  el.importFileBtn.focus();
+  showToast('Firefox открыл постоянную страницу импорта. Нажмите «Загрузить .txt» и выберите файл.', 5500);
 }
 
 function setupEvents() {
@@ -527,18 +591,15 @@ function setupEvents() {
     el.modeToggleBtn.addEventListener('click', toggleMode);
   }
 
-  if (el.saveAllBtn) {
-    el.saveAllBtn.addEventListener('click', saveAllData);
-  }
-
-  if (el.saveRawBtn) {
-    el.saveRawBtn.addEventListener('click', saveRawText);
+  if (el.rawTextEditor) {
+    el.rawTextEditor.addEventListener('input', scheduleRawTextAutosave);
   }
 }
 
 function initApp() {
   setupEvents();
   loadData();
+  showRequestedImport();
 }
 
 if (document.readyState === 'loading') {

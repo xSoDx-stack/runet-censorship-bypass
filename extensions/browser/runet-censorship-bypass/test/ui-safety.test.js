@@ -118,4 +118,37 @@ describe('UI Safety & DOM Injection Resistance (Task 7.2)', () => {
     expect(app).to.include('🔵 Антизапрет');
     expect(app).to.include('⚡ По правилам PAC');
   });
+
+  it('moves Firefox file import out of the transient toolbar popup', () => {
+    const appUrl = new URL('../src/extension-common/pages/options/app.js', import.meta.url);
+    const app = fs.readFileSync(appUrl, 'utf8');
+
+    expect(app).to.include("startsWith('moz-extension://')");
+    expect(app).to.include('pages/exceptions/index.html?import=1&target=included');
+    expect(app).to.include('openStandaloneDomainImport();');
+  });
+
+  it('autosaves the standalone domain editor without save buttons', () => {
+    const htmlUrl = new URL('../src/extension-common/pages/exceptions/index.html', import.meta.url);
+    const appUrl = new URL('../src/extension-common/pages/exceptions/index.js', import.meta.url);
+    const html = fs.readFileSync(htmlUrl, 'utf8');
+    const app = fs.readFileSync(appUrl, 'utf8');
+
+    expect(html).to.not.include('id="saveAllBtn"');
+    expect(html).to.not.include('id="saveRawBtn"');
+    expect(html).to.include('id="saveStatusText"');
+    expect(app).to.include("addEventListener('input', scheduleRawTextAutosave)");
+    expect(app).to.include('RAW_AUTOSAVE_DELAY_MS');
+  });
+
+  it('refreshes popup site counters after the standalone editor changes storage', () => {
+    const appUrl = new URL('../src/extension-common/pages/options/app.js', import.meta.url);
+    const app = fs.readFileSync(appUrl, 'utf8');
+
+    expect(app).to.include("PAC_MODS_STORAGE_KEY = 'pac-kitchen-mods'");
+    expect(app).to.include('chrome.storage.onChanged.addListener');
+    expect(app).to.include("window.addEventListener('focus', scheduleExternalStateRefresh)");
+    expect(app).to.include("document.addEventListener('visibilitychange'");
+    expect(app).to.include('refreshStateFromActiveTab({ preloadLogs: true })');
+  });
 });
